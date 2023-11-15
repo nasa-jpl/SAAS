@@ -1,0 +1,108 @@
+[NodeSCOrbitalDynamics-1]
+central_body_name = "mars"
+m0 = 200 # initial mass [kg]
+[NodeSCRigidBodyRotationDynamics-1]
+inertia_moment = [1.25, 4.25, 5.0] # spacecraft inertia moment [kg m^2]
+[NodeIMUSimple-1]
+w_noise = 0.001
+a_noise = 0.001
+w_bias = 0.0
+a_bias = 0.0
+[rwa]
+rwa_inertia = [0.25e-2, 0.25e-2, 0.25e-2]
+[NodePointingControlSimple-1]
+inertia_moment = [1.25, 4.25, 5.0] # spacecraft inertia moment [kg m^2]
+pointing_kp = 3.7e-4
+pointing_kd = 3.3e-2
+pointing_ki = 0.0 #1e-2
+i_mag_limit = 0.1
+i_enable_limit = 0.2
+[NodeStellarReferenceUnitSimple-1]
+sru_cross_noise = 0.01
+sru_roll_noise = 0.01
+[NodeMetricPointingError-1]
+title="Nadir Pointing Error"
+ylabel="pointing error (rad)"
+show = true
+save = false
+show_faults = true
+[NodeSunOcclusion-1]
+central_body_name = "mars"
+[NodeEarthOcclusion-1]
+central_body_name = "mars"
+[NodeSunPosition-1]
+central_body_name = "mars"
+[NodeEarthPosition-1]
+central_body_name = "mars"
+[NodeSimpleBattery-1]
+capacity_ah = 40.0
+efficiency = 0.85
+[NodeSimpleRectanglePrismSCBus-1]
+length = 5.0
+width = 2.0
+height = 1.5
+heat_cap_spec = 1100 # j kg^-1 K^-1
+mass = 200 # kg
+absorbtivity = 0.8
+emmisivity = 0.2
+[NodeSimpleGimbalSolarPanel-1]
+area = 6 # m^2
+efficiency = 0.35
+gimbal_max_angle = 30 # degrees
+panel_voltage = 28 # volts
+gimbal_time_constant = 4 #s
+encoder_noise_std = 0.01 # deg
+[NodeMetricSoCTemperature-1]
+title="S/C SoC and Temperature"
+show_faults = true
+show = true
+save = false
+[NodeVizAttitudeError-1]
+title="Controller Attitude and Rate Errors"
+show_faults = true
+show = true
+save = false
+[NodeSCTrajScope-1]
+show = true
+save = false
+anim_duration = 15
+central_body = "mars" 
+[NodeSCAttitudeScope-1]
+show = true
+save = false
+anim_duration = 15
+[fs]
+max_science = 10.0 # Gb
+warn_soc = 0.25
+warn_temp = 300 # K 
+nominal_soc = 0.9
+nominal_temp = 290 # K
+point_err_filt_len = 20
+point_err_sci_lock = 0.05
+point_err_dl_lock = 1.0
+sci_rate_partial_lock = 1e-3 # Gb/s
+sci_rate_full_lock = 10e-3 # Gb/s
+dl_rate_partial_lock = 0.01e-3 # Gb/s
+dl_rate_full_lock = 1.0e-3 # Gb/s
+dl_try_period = 3600
+dl_try_duration = 1800
+[NodePointingSunStuck-1]
+antenna_body = [-0.1, 0.0, -1.0]
+gimbal_max_angle = 30 # degrees
+[NodePointingCom-1]
+antenna_body = [-0.1, 0.0, -1.0]
+gimbal_max_angle = 30 # degrees
+[NodePointingCooling-1]
+min_area_normal = [-1.0, 0.0, 0.0]
+gimbal_max_angle = 30 # degrees
+[NodeMetricScience-1]
+title="S/C Science Metrics"
+show_faults = true
+show = true
+save = false
+[NodeFaultProtectionMGS-1]
+monitor-threshold = 5.0 # deg
+monitor-persistance = 30.0 # s
+[NodeRandomTimeDate-1]
+date_begin=1997-09-11T00:00:00 # MGS arrivel date
+date_end=2023-07-19T00:00:00 # My birthday

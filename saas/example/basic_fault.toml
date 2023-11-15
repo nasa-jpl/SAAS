@@ -1,0 +1,8 @@
+[[fs.out_solar_gimbal]]
+name = "sp gimbal stuck"
+start-time = 1800
+duration = 1000000
+occurance.p = 1.0
+action.type = "hold"
+action.value = -2.0
+action.index = 0

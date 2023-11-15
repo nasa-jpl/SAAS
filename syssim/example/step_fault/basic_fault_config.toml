@@ -1,0 +1,15 @@
+[[step-source.output]]
+name = 'fault'
+start-time.t = 5.0
+duration.dt = 1.0
+occurance.p = 1.0
+action.type = "random"
+action.value.gaussian.mean = 10.0
+action.value.gaussian.dev = 0.1
+action.index = 0
+
+
+
+
+
+

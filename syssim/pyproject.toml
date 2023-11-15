@@ -1,0 +1,14 @@
+[project]
+name = "syssim"
+description = "General purpose multi-system simulation utilizing graph structure."
+version = "1.0.0"
+authors = [
+    { name = "Josef Biberstein", email = "josef.business@protonmail.com" }
+]
+dependencies = [
+    "matplotlib",
+    "scipy",
+    "rustworkx",
+    "toml",
+    "tqdm"
+]

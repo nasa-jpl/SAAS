@@ -1,0 +1,16 @@
+[project]
+name = "saas"
+description = "Module implementing the Simulation for analysis of autonomy at a System-level."
+version = "0.1.0"
+authors = [
+    { name = "Josef Biberstein", email = "josef.business@protonmail.com" }
+]
+dependencies = [
+    "matplotlib",
+    "scipy",
+    "rustworkx",
+    "toml",
+    "poliastro",
+    "astropy",
+    "syssim",
+]
