@@ -34,6 +34,7 @@ class NodePointingControlSimple(NodeDifferential):
         input_w_cmd = InputPort("input_w_cmd", self)
         input_w = InputPort("input_w", self)
         input_mtm_internal = InputPort("input_mtm_int", self)
+        input_sc_inertia_moment = InputPort("input_sc_inertia_moment", self)
 
         output_tau_cmd = OutputPort("output_tau_cmd", self)
         output_q_err = OutputPort("output_q_err", self)
@@ -45,6 +46,7 @@ class NodePointingControlSimple(NodeDifferential):
             input_w_cmd.name: input_w_cmd,
             input_w.name: input_w,
             input_mtm_internal.name: input_mtm_internal,
+            input_sc_inertia_moment.name: input_sc_inertia_moment,
             output_tau_cmd.name: output_tau_cmd,
             output_q_err.name: output_q_err,
             output_w_err.name: output_w_err,
@@ -56,11 +58,11 @@ class NodePointingControlSimple(NodeDifferential):
         self._kp = self._config["pointing_kp"]
         self._kd = self._config["pointing_kd"]
         self._ki = self._config["pointing_ki"]
-        self._inertia = np.diag(self._config["inertia_moment"])
 
         self._t = 0
 
     def update(self, sim_time: float):
+        self._inertia = self._ports["input_sc_inertia_moment"].read()
         q_cmd = self._ports["input_q_cmd"].read()
         if np.any(q_cmd) is None:
             q_cmd = np.array([1, 0, 0, 0])

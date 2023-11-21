@@ -24,7 +24,7 @@ def add_fault_detect_vline(
     output = []
     for f in faults:
         output.append(
-            ax.axvline(f[1] / time_scale, color="w", ls="-.", label="fault detection")
+            ax.axvline(f[1] / time_scale, color="r", ls="-.", label="fault detection")
         )
         ybottom, ytop = ax.get_ylim()
         ax.text(f[1] / time_scale, (ytop + ybottom) / 2, f[0], fontsize=10)

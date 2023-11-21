@@ -70,7 +70,7 @@ class NodeSunOcclusion(Node):
 
 class NodeEarthOcclusion(Node):
     def __init__(self, **kwargs):
-         """Node for calculating whether the Earth is occluded by the central body from the spacecraft's current position.
+        """Node for calculating whether the Earth is occluded by the central body from the spacecraft's current position.
 
         Ports:
             in_sc_pos_icrs (np.array): input spacecraft position in the ICRS frame relative to central body. 3x1 [m]
@@ -79,7 +79,7 @@ class NodeEarthOcclusion(Node):
         Configs:
             central_body_name (str): name of the central body for the simulation (e.g., "mars")
         """
-         
+
         in_sc_pos_icrs = InputPort("in_sc_pos_icrs", self)
         in_start_datetime = InputPort("in_start_datetime", self)
 

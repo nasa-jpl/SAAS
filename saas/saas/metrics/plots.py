@@ -37,6 +37,11 @@ class NodeMetricPointingError(Node):
         self._error.append(error)
 
     def finalize(self):
+        if self._config["dark_mode"]:
+            plt.style.use("dark_background")
+        else:
+            plt.style.use("default")
+
         t0 = self._ports["in_start_datetime"].read()
 
         title = self._config["title"]
@@ -100,6 +105,11 @@ class NodeMetricSoCTemperature(Node):
         self._k.append(self._ports["in_temp"].read())
 
     def finalize(self):
+        if self._config["dark_mode"]:
+            plt.style.use("dark_background")
+        else:
+            plt.style.use("default")
+
         t0 = self._ports["in_start_datetime"].read()
 
         title = self._config["title"]
@@ -131,7 +141,7 @@ class NodeMetricSoCTemperature(Node):
             artists += add_fault_detect_vline(fault_detections, soc_ax)
 
         labels = [line.get_label() for line in artists]
-        soc_ax.legend(artists, labels, loc="upper left")
+        k_ax.legend(artists, labels, loc="upper left").set_zorder(10.0)
 
         if self._config["show"]:
             plt.show()
@@ -169,6 +179,11 @@ class NodeMetricScience(Node):
         self._d.append(self._ports["in_science_dl"].read())
 
     def finalize(self):
+        if self._config["dark_mode"]:
+            plt.style.use("dark_background")
+        else:
+            plt.style.use("default")
+            
         t0 = self._ports["in_start_datetime"].read()
 
         title = self._config["title"]
@@ -193,7 +208,8 @@ class NodeMetricScience(Node):
 
         lines = [line1[0], line2[0]]
         labels = [line.get_label() for line in lines]
-        s_ax.legend(lines, labels, loc="upper left")
+        d_ax.legend(lines, labels, loc="upper left").set_zorder(10.0)
+
 
         if self._config["show"]:
             plt.show()

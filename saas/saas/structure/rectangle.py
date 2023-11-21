@@ -13,12 +13,16 @@ class NodeSimpleRectanglePrismSCBus(NodeDifferential):
         in_q_sc2eci = InputPort("in_q_sc2eci", self)
 
         out_sc_temp = OutputPort("out_sc_temp", self)
+        out_sc_mass = OutputPort("out_sc_mass", self)
+        out_sc_inertia_moment = OutputPort("out_sc_inertia_moment", self)
 
         ports = {
             in_sun_unit.name: in_sun_unit,
             in_solar_constant.name: in_solar_constant,
             in_q_sc2eci.name: in_q_sc2eci,
             out_sc_temp.name: out_sc_temp,
+            out_sc_mass.name: out_sc_mass,
+            out_sc_inertia_moment.name: out_sc_inertia_moment,
         }
 
         super().__init__(x0, ports, **kwargs)
@@ -29,6 +33,11 @@ class NodeSimpleRectanglePrismSCBus(NodeDifferential):
         l = self._config["length"]
         w = self._config["width"]
         h = self._config["height"]
+        self._m = self._config["m"]
+
+        self._i_x = 1 / 12 * self._m * (w**2 + h**2)
+        self._i_y = 1 / 12 * self._m * (l**2 + h**2)
+        self._i_z = 1 / 12 * self._m * (l**2 + w**2)
 
         ax_sc = np.array([[w * h, 0, 0]]).T
         ay_sc = np.array([[0, l * h, 0]]).T
@@ -39,6 +48,11 @@ class NodeSimpleRectanglePrismSCBus(NodeDifferential):
         self._c = self._config["heat_cap_spec"]
         self._eps = self._config["emmisivity"]
         self._sig = 5.670374419e-8
+
+        self._ports["out_sc_mass"].shift_out(self._m)
+        self._ports["out_sc_inertia_moment"].shift_out(
+            np.diag([self._i_x, self._i_y, self._i_z])
+        )
 
     def update(self, sim_time: float):
         q_sc2eci = self._ports["in_q_sc2eci"].read()
@@ -55,6 +69,7 @@ class NodeSimpleRectanglePrismSCBus(NodeDifferential):
         r_sc2eci = Rotation.from_quat(
             [q_sc2eci[1], q_sc2eci[2], q_sc2eci[3], q_sc2eci[0]]
         )
+
         def integrand(t, x):
             return self._dynamics(x, r_sc2eci, sun_unit * solar_constant)
 

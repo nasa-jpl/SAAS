@@ -1,4 +1,4 @@
-from enum import StrEnum
+from enum import Enum
 from collections import deque
 from typing import Dict, Union
 
@@ -9,7 +9,7 @@ from syssim import Node, NodeDifferential, InputPort, OutputPort
 import matplotlib.pyplot as plt
 
 
-class SimpleFlightState(StrEnum):
+class SimpleFlightState(str, Enum):
     SCIENCE = "SCIENCE"
     SUN_STUCK = "SUN_STUCK"
     EARTH_SUN_COM = "EARTH_SUN_COM"
@@ -17,7 +17,7 @@ class SimpleFlightState(StrEnum):
     SAFE = "SAFE"
 
 
-class SafeModeTask(StrEnum):
+class SafeModeTask(str, Enum):
     CHARGE = "charge"
     COOL = "cool"
     DL = "downlink"
@@ -285,7 +285,7 @@ class NodeSimpleFlightSoftware(Node):
 
         # TO SUN_STUCk
         if soc < self._warn_soc:
-            self._state = SimpleFlightState.COOLING
+            self._state = SimpleFlightState.SUN_STUCK
 
         # TO SAFE
         if temp > self._warn_temp and soc < self._warn_soc:

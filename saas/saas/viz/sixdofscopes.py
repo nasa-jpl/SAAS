@@ -2,7 +2,6 @@ from typing import Sequence
 
 import matplotlib.pyplot as plt
 
-plt.style.use("dark_background")
 import matplotlib.animation as anim
 from matplotlib.patches import FancyArrowPatch
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -93,7 +92,11 @@ class NodeSCTrajScope(Node):
 
     def finalize(self):
         t0 = self._ports["in_start_datetime"].read()
-
+        if self._config["dark_mode"]:
+            plt.style.use("dark_background")
+        else:
+            plt.style.use("default")
+            
         r_max = np.max(np.linalg.norm(self._r, axis=1)) * 1e-3
         v_max = np.max(self._v) * 1e-3
         v_min = np.min(self._v) * 1e-3
@@ -386,7 +389,10 @@ class NodeSCAttitudeScope(Node):
 
     def finalize(self):
         t0 = self._ports["in_start_datetime"].read()
-
+        if self._config["dark_mode"]:
+            plt.style.use("dark_background")
+        else:
+            plt.style.use("default")
         self._frames = list()
 
         self._fig = plt.figure(

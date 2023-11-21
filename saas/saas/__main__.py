@@ -275,6 +275,9 @@ x Occlusion
 - auto FP node
 """
 
+node_thermal["out_sc_mass"] = node_orbit["input_mass"]
+node_thermal["out_sc_inertia_moment"] = node_control["input_sc_inertia_moment"]
+node_thermal["out_sc_inertia_moment"] = node_rb["input_inertia_moment"]
 
 node_orbit["output_a_ff_eci"] = node_imu["true_a"]
 node_rb["output_w_sc"] = node_imu["true_w"]

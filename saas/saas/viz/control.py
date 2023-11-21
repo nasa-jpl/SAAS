@@ -30,6 +30,10 @@ class NodeVizAttitudeError(Node):
 
     def finalize(self):
         title = self._config["title"]
+        if self._config["dark_mode"]:
+            plt.style.use("dark_background")
+        else:
+            plt.style.use("default")
 
         _, (q_ax, w_ax) = plt.subplots(2, 1, sharex=True)
 
