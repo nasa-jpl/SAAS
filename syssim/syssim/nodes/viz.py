@@ -1,7 +1,13 @@
+from typing import NamedTuple
+
 import matplotlib.pyplot as plt
 
 from syssim.core import Node, InputPort
 
+class NodeScopeInputs(NamedTuple):
+
+    scope: InputPort
+    """The input vector for the scope"""
 
 class NodeScope(Node):
     def __init__(self, **kwargs):
@@ -20,9 +26,8 @@ class NodeScope(Node):
         self._t = list()
         self._y = list()
 
-        input_scope = InputPort("input_scope", self)
-        ports = {input_scope.name: input_scope}
-        super().__init__(ports, **kwargs)
+        self._i = NodeScopeInputs(InputPort("input_scope", self))
+        super().__init__(self._i, None, **kwargs)
 
     def initialize(self):
         self._title = self._config["title"]
@@ -33,7 +38,7 @@ class NodeScope(Node):
 
     def update(self, sim_time: float):
         self._t.append(sim_time)
-        self._y.append(self._ports["input_scope"].read())
+        self._y.append(self._i.scope.read())
 
     def finalize(self):
         plt.figure
@@ -54,3 +59,11 @@ class NodeScope(Node):
                 )
         if self._show:
             plt.show()
+
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return ()

@@ -1,7 +1,6 @@
 from typing import List, Union
 from copy import deepcopy
 
-
 class InputPort:
     def __init__(self, name: str, node: "Node"):
         """Represents an input port into a node. Stores values during a simulation and allows those values to be updated by a connected output port.
@@ -70,6 +69,10 @@ class InputPort:
             Union[OutputPort, None]: the output port
         """
         return self._connected_out_port
+    
+    def __lshift__(lhs, rhs: "OutputPort"):
+        # <<
+        rhs.connect_input(lhs)
 
 
 class OutputPort:
@@ -137,3 +140,8 @@ class OutputPort:
             Node: the node
         """
         return self._node
+    
+    def __rshift__(lhs, rhs: "InputPort"):
+        # >>
+        lhs.connect_input(rhs)
+

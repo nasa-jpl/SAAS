@@ -1,18 +1,20 @@
-from typing import Union, Dict, List
+from typing import Union, Dict, List, Tuple, NamedTuple
 from copy import deepcopy
+from abc import ABC, abstractmethod
 
 import toml
 from numpy import array
 
-from syssim.core.port import InputPort, OutputPort
+from syssim.core.port import InputPort
 
 
-class Node:
+class Node(ABC):
     """A class representing a single unit of behavior in a simulation. This can be anything from a basic operation, like addition or multiplication, to a complicated model of a component, such as an inertial measurement unit, or physcial phenomenon or much more."""
 
     def __init__(
         self,
-        ports: Dict[str, Union[InputPort, OutputPort]],
+        input_ports: Union[NamedTuple, Tuple],
+        output_ports: Union[NamedTuple, Tuple],
         config: str = None,
         sample_frequency=None,
         sample_period=None,
@@ -27,7 +29,10 @@ class Node:
             sample_period (float, optional): Period between node updates in the simulation. Defaults to None.
             name (str, optional): Name of the node. Used to map configuration values and faults to this node. Defaults to None.
         """
-        self._ports = ports
+
+        self._i = input_ports
+        self._o = output_ports
+
         if config != None:
             self._full_config = toml.load(config)
         else:
@@ -52,25 +57,25 @@ class Node:
 
         self._system: "NodeSystem" = None
 
-    def __getitem__(self, key: str) -> Union[InputPort, OutputPort]:
-        """Get a port from this node by name.
+    # def __getitem__(self, key: str) -> Union[InputPort, OutputPort]:
+    #     """Get a port from this node by name.
 
-        Args:
-            key (str): Name of the port
+    #     Args:
+    #         key (str): Name of the port
 
-        Returns:
-            Union[InputPort, OutputPort]: Port with the given name
-        """
-        return self._ports[key]
+    #     Returns:
+    #         Union[InputPort, OutputPort]: Port with the given name
+    #     """
+    #     return self._ports[key]
 
-    def __setitem__(self, key: str, port: InputPort):
-        """Connect an input port to an output port in this node
+    # def __setitem__(self, key: str, port: InputPort):
+    #     """Connect an input port to an output port in this node
 
-        Args:
-            key (str): name of the output port
-            port (InputPort): the input port to connect to the named output port
-        """
-        self._ports[key].connect_input(port)
+    #     Args:
+    #         key (str): name of the output port
+    #         port (InputPort): the input port to connect to the named output port
+    #     """
+    #     self._ports[key].connect_input(port)
 
     def initialize(self):
         """Method stub for initializing the node at the start of a simulation. All initialization actions should be done here when subclassing the node. This ensures that the node will be properlly reset in simulations that run multiple batches."""
@@ -95,20 +100,26 @@ class Node:
             List[Node]: the nodes in the system on which this node depends
         """
         deps = list()
-        for p in self._ports.values():
-            if isinstance(p, InputPort):
-                # TODO Issue a warning for unconnected ports?
-                if p.output_port != None and p.output_port.node not in deps:
-                    deps.append(p.output_port.node)
+        for p in self.i:
+            # TODO Fail warning if p is not an input port
+            # TODO Issue a warning for unconnected ports?
+            if p.output_port != None and p.output_port.node not in deps:
+                deps.append(p.output_port.node)
         return deps
 
-    def ports(self) -> List[Union[InputPort, OutputPort]]:
-        """Get this node's ports
-
-        Returns:
-            List[Union[InputPort, OutputPort]]: this node's ports
+    @property
+    @abstractmethod
+    def i(self):
+        """Input ports for this Node.
         """
-        return self._ports
+        pass
+
+    @property
+    @abstractmethod
+    def o(self):
+        """Output ports for this Node.
+        """
+        pass
 
     @property
     def period(self) -> float:
@@ -146,11 +157,7 @@ class Node:
         Returns:
             int: num inputs
         """
-        n = 0
-        for p in self._ports.values():
-            if isinstance(p, InputPort):
-                n += 1
-        return n
+        return len(self._i)
 
     @property
     def n_outputs(self) -> int:
@@ -159,11 +166,7 @@ class Node:
         Returns:
             int: num outputs
         """
-        n = 0
-        for p in self._ports.values():
-            if isinstance(p, OutputPort):
-                n += 1
-        return n
+        return len(self._o)
 
     @property
     def name(self) -> str:
@@ -188,7 +191,7 @@ class NodeDifferential(Node):
     """A class representing any node that models a differential equation. These nodes are special in that they may have inputs, but are assumed to only depend on the input values from the simulation step before the one they are currently updating too. This means that they do not have dependencies for the purpose of solving for a node update order."""
 
     def __init__(
-        self, x0: array, ports: Dict[str, Union[InputPort, OutputPort]], **kwargs
+        self, x0: array, input_ports: List[str], output_ports: List[str], **kwargs
     ):
         """A class representing any node that models a differential equation. These nodes are special in that they may have inputs, but are assumed to only depend on the input values from the simulation step before the one they are currently updating too. This means that they do not have dependencies for the purpose of solving for a node update order.
 
@@ -199,7 +202,7 @@ class NodeDifferential(Node):
 
         self._x = x0
         self._x0 = x0
-        super().__init__(ports, **kwargs)
+        super().__init__(input_ports, output_ports, **kwargs)
 
     def depends(self) -> List[Node]:
         # Differential blocks have no dependencies...

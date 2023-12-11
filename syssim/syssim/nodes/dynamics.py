@@ -1,8 +1,22 @@
+from typing import NamedTuple, Union
+
 import numpy as np
 from scipy.integrate import solve_ivp
 
 from syssim.core import NodeDifferential
 from syssim.core import InputPort, OutputPort
+
+
+class NodeStateSpaceInputs(NamedTuple):
+
+    u: InputPort
+    """Input vector for the SS system"""
+
+
+class NodeStateSpaceOutputs(NamedTuple):
+
+    y: OutputPort
+    """Output vector for the SS system"""
 
 
 class NodeStateSpace(NodeDifferential):
@@ -23,18 +37,16 @@ class NodeStateSpace(NodeDifferential):
         self._b = b
         self._c = c
 
-        input_u = InputPort("input_u", self)
-        output_y = OutputPort("output_y", self)
+        self._i = NodeStateSpaceInputs(InputPort("input_u", self))
+        self._o = NodeStateSpaceOutputs(OutputPort("output_y", self))
 
-        ports = {input_u.name: input_u, output_y.name: output_y}
-
-        super().__init__(x0, ports, **kwargs)
+        super().__init__(x0, self._i, self._o, **kwargs)
 
     def initialize(self):
         self._t = 0
 
     def update(self, sim_time: float):
-        u = self._ports["input_u"].read()
+        u = self._i.u.read()
         def integrand(t, x): return self._dynamics(x, u)
 
         sol = solve_ivp(integrand, (self._t, sim_time), self._x)
@@ -44,9 +56,17 @@ class NodeStateSpace(NodeDifferential):
 
         y = self._output(self._x, u)
 
-        self._ports["output_y"].shift_out(y)
+        self._o.y.shift_out(y)
 
         self._t = sim_time
+
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
 
     def _dynamics(self, x, u):
         return self._a @ x + self._b @ u

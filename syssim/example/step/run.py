@@ -38,8 +38,16 @@ n_sys = NodeSystem()
 n_sys.add_node(node_step)
 n_sys.add_node(node_lti)
 n_sys.add_node(node_scope)
-node_step["output"] = node_lti["input_u"]
-node_lti["output_y"] = node_scope["input_scope"]
+# node_step["output"] = node_lti["input_u"]
+# node_lti["output_y"] = node_scope["input_scope"]
+node_step.o.constant_out >> node_lti.i.u
+node_scope.i.scope << node_lti.o.y
+
+'''
+# Something like this would be a good interface. Ideally those port names are discoverable under intellisense for increased ergonomicity.
+node_step.o.output >> node_lti.i.input_u
+node_scope.i.input_scope << node_lti.o.output_y
+'''
 
 # Can print the system to show some info about it...
 print(n_sys)

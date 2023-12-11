@@ -24,7 +24,9 @@ class NodeSystem:
         output = ""
         for n in self._nodes:
             output += f"{n.name} = {n.__class__.__name__}:\n\t"
-            for p in n.ports().values():
+            for p in n.i:
+                output += f"{p.name}\n\t"
+            for p in n.o:
                 output += f"{p.name}\n\t"
             output += "\n"
         return output
