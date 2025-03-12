@@ -1,22 +1,24 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from typing import NamedTuple
 
 from syssim.core import Node, InputPort
 
 from saas.utility.plotting import add_fault_vbars, add_fault_detect_vline
 
 
+class NodeVizAttitudeErrorInputs(NamedTuple):
+    in_q_e: InputPort
+    in_w_e: InputPort
+
 class NodeVizAttitudeError(Node):
     def __init__(self, **kwargs):
-        in_q_e = InputPort("in_q_e", self)
-        in_w_e = InputPort("in_w_e", self)
+        self._i = NodeVizAttitudeErrorInputs(
+            InputPort("in_q_e", self),
+            InputPort("in_w_e", self)
+        )
 
-        ports = {
-            in_q_e.name: in_q_e,
-            in_w_e.name: in_w_e,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, (), **kwargs)
 
     def initialize(self):
         self._t = []
@@ -25,8 +27,8 @@ class NodeVizAttitudeError(Node):
 
     def update(self, sim_time: float):
         self._t.append(sim_time / 3600)
-        self._q_e.append(self._ports["in_q_e"].read())
-        self._w_e.append(self._ports["in_w_e"].read())
+        self._q_e.append(self._i.in_q_e.read())
+        self._w_e.append(self._i.in_w_e.read())
 
     def finalize(self):
         title = self._config["title"]
@@ -69,3 +71,12 @@ class NodeVizAttitudeError(Node):
             )
 
         plt.close(plt.gcf())
+
+    @property
+    def i(self):
+        return self._i
+
+    
+    @property
+    def o(self):
+        return ()

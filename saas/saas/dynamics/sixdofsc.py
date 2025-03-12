@@ -3,8 +3,21 @@ from scipy.integrate import solve_ivp
 from scipy.spatial.transform import Rotation
 
 from syssim import NodeDifferential, InputPort, OutputPort
+from typing import NamedTuple
 
 from saas.utility import get_poliastro_body
+
+
+class NodeSCOrbitalDynamicsInputs(NamedTuple):
+    input_mass: InputPort
+    input_f_ext: InputPort
+
+
+class NodeSCOrbitalDynamicsOutputs(NamedTuple):
+    output_r_eci: OutputPort
+    output_v_eci: OutputPort
+    output_a_eci: OutputPort
+    output_a_ff_eci: OutputPort
 
 
 class NodeSCOrbitalDynamics(NodeDifferential):
@@ -33,16 +46,10 @@ class NodeSCOrbitalDynamics(NodeDifferential):
         output_acc_eci = OutputPort("output_a_eci", self)
         output_acc_freefall_eci = OutputPort("output_a_ff_eci", self)
 
-        ports = {
-            input_mass.name: input_mass,
-            input_ext_forces.name: input_ext_forces,
-            output_pos_eci.name: output_pos_eci,
-            output_vel_eci.name: output_vel_eci,
-            output_acc_eci.name: output_acc_eci,
-            output_acc_freefall_eci.name: output_acc_freefall_eci,
-        }
+        self._i = NodeSCOrbitalDynamicsInputs(input_mass, input_ext_forces)
+        self._o = NodeSCOrbitalDynamicsOutputs(output_pos_eci, output_vel_eci, output_acc_eci, output_acc_freefall_eci)
 
-        super().__init__(x0, ports, **kwargs)
+        super().__init__(x0, self._i, self._o, **kwargs)
 
     def initialize(self):
         self._t = 0
@@ -50,8 +57,8 @@ class NodeSCOrbitalDynamics(NodeDifferential):
         self._mu = get_poliastro_body(self._config["central_body_name"]).k.value
 
     def update(self, sim_time: float):
-        f_ext = self._ports["input_f_ext"].read()
-        m = self._ports["input_mass"].read()
+        f_ext = self._i.input_f_ext.read()
+        m = self._i.input_mass.read()
 
         f_ext = np.zeros((3,)) if f_ext == None else f_ext
 
@@ -65,10 +72,10 @@ class NodeSCOrbitalDynamics(NodeDifferential):
 
         r_eci, v_eci, a_eci, a_ff_eci = self._output(self._x, f_ext, m)
 
-        self._ports["output_r_eci"].shift_out(r_eci)
-        self._ports["output_v_eci"].shift_out(v_eci)
-        self._ports["output_a_eci"].shift_out(a_eci)
-        self._ports["output_a_ff_eci"].shift_out(a_ff_eci)
+        self._o.output_r_eci.shift_out(r_eci)
+        self._o.output_v_eci.shift_out(v_eci)
+        self._o.output_a_eci.shift_out(a_eci)
+        self._o.output_a_ff_eci.shift_out(a_ff_eci)
 
     def _dynamics(self, x: np.ndarray, f_ext: np.ndarray, m: float):
         r = x[0:3]
@@ -93,6 +100,25 @@ class NodeSCOrbitalDynamics(NodeDifferential):
         a_ff_eci = a_ext
 
         return r_eci, v_eci, a_eci, a_ff_eci
+    
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
+
+
+class NodeSCRigidBodyRotationDynamicsInputs(NamedTuple):
+    input_mtm_internal_sc: InputPort
+    input_tau_external_sc: InputPort
+    input_inertia_moment: InputPort
+
+
+class NodeSCRigidBodyRotationDynamicsOutputs(NamedTuple):
+    output_q_sc_to_eci: OutputPort
+    output_w_sc: OutputPort
 
 
 class NodeSCRigidBodyRotationDynamics(NodeDifferential):
@@ -118,23 +144,18 @@ class NodeSCRigidBodyRotationDynamics(NodeDifferential):
         output_q_sc_to_eci = OutputPort("output_q_sc_to_eci", self)
         output_w_sc = OutputPort("output_w_sc", self)
 
-        ports = {
-            input_mtm_internal_sc.name: input_mtm_internal_sc,
-            input_tau_external_sc.name: input_tau_external_sc,
-            input_inertia_moment.name: input_inertia_moment,
-            output_q_sc_to_eci.name: output_q_sc_to_eci,
-            output_w_sc.name: output_w_sc,
-        }
+        self._i = NodeSCRigidBodyRotationDynamicsInputs(input_mtm_internal_sc, input_tau_external_sc, input_inertia_moment)
+        self._o = NodeSCRigidBodyRotationDynamicsOutputs(output_q_sc_to_eci, output_w_sc)
 
-        super().__init__(x0, ports, **kwargs)
+        super().__init__(x0, self._i, self._o, **kwargs)
 
     def initialize(self):
         self._t = 0
 
     def update(self, sim_time: float):
-        tau_ext_sc = self._ports["input_tau_external_sc"].read()
-        h_int_sc = self._ports["input_mtm_internal_sc"].read()
-        j = self._ports["input_inertia_moment"].read()
+        tau_ext_sc = self._i.input_tau_external_sc.read()
+        h_int_sc = self._i.input_mtm_internal_sc.read()
+        j = self._i.input_inertia_moment.read()
 
         tau_ext_sc = np.zeros((3,)) if np.any(tau_ext_sc) == None else tau_ext_sc
         h_int_sc = np.zeros((3,)) if np.any(h_int_sc) == None else h_int_sc
@@ -155,8 +176,8 @@ class NodeSCRigidBodyRotationDynamics(NodeDifferential):
 
         q_sc_to_eci, w_sc = self._output(self._x)
 
-        self._ports["output_q_sc_to_eci"].shift_out(q_sc_to_eci)
-        self._ports["output_w_sc"].shift_out(w_sc)
+        self._o.output_q_sc_to_eci.shift_out(q_sc_to_eci)
+        self._o.output_w_sc.shift_out(w_sc)
 
     def _dynamics(self, x: np.ndarray, mtm_int_sc: np.ndarray, tau_ext_sc: np.ndarray, j: np.ndarray):
         qw, qx, qy, qz = x[0:4]
@@ -189,3 +210,11 @@ class NodeSCRigidBodyRotationDynamics(NodeDifferential):
         w_sc = x[4:7]
 
         return q_sc_to_eci, w_sc
+    
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o

@@ -5,9 +5,18 @@ from astropy.coordinates import (
 )
 from astropy.time import Time
 from astropy import units as u
+from typing import NamedTuple
 
-from syssim.core import Node, OutputPort, InputPort
+from syssim import Node, OutputPort, InputPort
 
+class NodeSunPositionInputs(NamedTuple):
+    in_sc_pos_icrs: InputPort
+    in_start_datetime: InputPort
+
+class NodeSunPositionOutputs(NamedTuple):
+    out_sun_pos_icrs: OutputPort
+    out_sun_unit_icrs: OutputPort
+    out_solar_constant: OutputPort
 
 class NodeSunPosition(Node):
     def __init__(
@@ -25,30 +34,25 @@ class NodeSunPosition(Node):
         Configs:
             central_body_name (str): name of the central body for the simulation (e.g., "mars")
         """
-        in_sc_pos_icrs = InputPort("in_sc_pos_icrs", self)
-        in_start_datetime = InputPort("in_start_datetime", self)
+        self._i = NodeSunPositionInputs(
+            InputPort("in_sc_pos_icrs", self),
+            InputPort("in_start_datetime", self)
+        )
+        self._o = NodeSunPositionOutputs(
+            OutputPort("out_sun_pos_icrs", self),
+            OutputPort("out_sun_unit_icrs", self),
+            OutputPort("out_solar_constant", self)
+        )
 
-        out_sun_pos_icrs = OutputPort("out_sun_pos_icrs", self)
-        out_sun_unit_icrs = OutputPort("out_sun_unit_icrs", self)
-        out_solar_constant = OutputPort("out_solar_constant", self)
-
-        ports = {
-            in_sc_pos_icrs.name: in_sc_pos_icrs,
-            in_start_datetime.name: in_start_datetime,
-            out_sun_pos_icrs.name: out_sun_pos_icrs,
-            out_sun_unit_icrs.name: out_sun_unit_icrs,
-            out_solar_constant.name: out_solar_constant,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, self._o, **kwargs)
 
     def initialize(self):
         self._solar_constant = 1.361e3  # W m^-2
 
     def update(self, sim_time: float):
-        self._t0 = Time(self._ports["in_start_datetime"].read())
+        self._t0 = Time(self._i.in_start_datetime.read())
 
-        sc_pos_cb = CartesianRepresentation(self._ports["in_sc_pos_icrs"].read() * u.m)
+        sc_pos_cb = CartesianRepresentation(self._i.in_sc_pos_icrs.read() * u.m)
 
         t = self._t0 + (sim_time * u.s)
         sun_pos_ICRS = get_body_barycentric("sun", t)
@@ -59,11 +63,18 @@ class NodeSunPosition(Node):
         sc_sun_ICRS = sun_pos_ICRS - sc_pos_ICRS
         sc_sun_au = np.linalg.norm(sc_sun_ICRS.xyz.to(u.au).value)
 
-        self._ports["out_sun_pos_icrs"].shift_out(sc_sun_ICRS.get_xyz().si.value)
-        self._ports["out_sun_unit_icrs"].shift_out(
+        self._o.out_sun_pos_icrs.shift_out(sc_sun_ICRS.get_xyz().si.value)
+        self._o.out_sun_unit_icrs.shift_out(
             sc_sun_ICRS.get_xyz().si.value
             / np.linalg.norm(sc_sun_ICRS.get_xyz().si.value)
         )
-        self._ports["out_solar_constant"].shift_out(
+        self._o.out_solar_constant.shift_out(
             self._solar_constant / sc_sun_au**2
         )
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o

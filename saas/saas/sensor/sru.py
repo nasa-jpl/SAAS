@@ -1,24 +1,29 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
+from typing import NamedTuple
 
 from syssim.core import Node, InputPort, OutputPort
 
+class NodeStellarReferenceUnitSimpleInputs(NamedTuple):
+    input_q_sc2eci: InputPort
+
+class NodeStellarReferenceUnitSimpleOutputs(NamedTuple):
+    output_q_sc2eci_measure: OutputPort
 
 class NodeStellarReferenceUnitSimple(Node):
     def __init__(self, **kwargs):
-        input_q_sc2eci = InputPort("input_q_sc2eci", self)
+        self._i = NodeStellarReferenceUnitSimpleInputs(
+            InputPort("input_q_sc2eci", self)
+        )
+        self._o = NodeStellarReferenceUnitSimpleOutputs(
+            OutputPort("output_q_sc2eci_measure", self)
+        )
 
-        output_q_sc2eci_measure = OutputPort("output_q_sc2eci_measure", self)
-
-        ports = {
-            input_q_sc2eci.name: input_q_sc2eci,
-            output_q_sc2eci_measure.name: output_q_sc2eci_measure,
-        }
-
-        super().__init__(ports, **kwargs)
+        ports = {**self._i._asdict(), **self._o._asdict()}
+        super().__init__(self._i, self._o, **kwargs)
 
     def update(self, sim_time: float):
-        q_sc2eci = self._ports["input_q_sc2eci"].read()
+        q_sc2eci = self._i.input_q_sc2eci.read()
 
         cross_noise = self._config["sru_cross_noise"]
         roll_noise = self._config["sru_roll_noise"]
@@ -36,7 +41,7 @@ class NodeStellarReferenceUnitSimple(Node):
         q_sc2eci_measure = Rotation.from_euler("ZYX", eul_sc2eci_measure).as_quat(canonical=True)
 
         # NOTE no idea why I had to negate the quaternion here. Should find out why...
-        self._ports["output_q_sc2eci_measure"].shift_out(
+        self._o.output_q_sc2eci_measure.shift_out(
             np.array(
                 [
                     -q_sc2eci_measure[3],
@@ -46,3 +51,11 @@ class NodeStellarReferenceUnitSimple(Node):
                 ]
             )
         )
+
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o

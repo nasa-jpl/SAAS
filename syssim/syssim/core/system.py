@@ -213,7 +213,7 @@ class NodeSystem:
                     f._gen_state()
 
         for st, ns in tqdm(
-            self._schedule.items(), leave=False, position=1, desc=f"Sim: {sim_name}"
+            self._schedule.items(), leave=False, position=1, desc=f"Sim --- {sim_name}"
         ):
             # print(f"Processing time step {st}...")
             # Update each fault

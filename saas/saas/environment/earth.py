@@ -5,9 +5,18 @@ from astropy.coordinates import (
 )
 from astropy.time import Time
 from astropy import units as u
+from typing import NamedTuple
 
 from syssim.core import Node, OutputPort, InputPort
 
+
+class NodeEarthPositionInputs(NamedTuple):
+    in_sc_pos_icrs: InputPort
+    in_start_datetime: InputPort
+
+class NodeEarthPositionOutputs(NamedTuple):
+    out_earth_pos_icrs: OutputPort
+    out_earth_unit_icrs: OutputPort
 
 class NodeEarthPosition(Node):
     def __init__(
@@ -24,25 +33,21 @@ class NodeEarthPosition(Node):
         Configs:
             central_body_name (str): name of the central body for the simulation (e.g., "mars")
         """
-        in_sc_pos_icrs = InputPort("in_sc_pos_icrs", self)
-        in_start_datetime = InputPort("in_start_datetime", self)
+        self._i = NodeEarthPositionInputs(
+            InputPort("in_sc_pos_icrs", self),
+            InputPort("in_start_datetime", self)
+        )
+        self._o = NodeEarthPositionOutputs(
+            OutputPort("out_earth_pos_icrs", self),
+            OutputPort("out_earth_unit_icrs", self)
+        )
 
-        out_earth_pos_icrs = OutputPort("out_earth_pos_icrs", self)
-        out_earth_unit_icrs = OutputPort("out_earth_unit_icrs", self)
-
-        ports = {
-            in_sc_pos_icrs.name: in_sc_pos_icrs,
-            in_start_datetime.name: in_start_datetime,
-            out_earth_pos_icrs.name: out_earth_pos_icrs,
-            out_earth_unit_icrs.name: out_earth_unit_icrs,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, self._o, **kwargs)
 
     def update(self, sim_time: float):
-        self._t0 = Time(self._ports["in_start_datetime"].read())
+        self._t0 = Time(self._i.in_start_datetime.read())
 
-        sc_pos_cb = CartesianRepresentation(self._ports["in_sc_pos_icrs"].read() * u.m)
+        sc_pos_cb = CartesianRepresentation(self._i.in_sc_pos_icrs.read() * u.m)
 
         t = self._t0 + (sim_time * u.s)
         earth_pos_ICRS = get_body_barycentric("earth", t)
@@ -51,8 +56,15 @@ class NodeEarthPosition(Node):
 
         sc_earth_icrs = earth_pos_ICRS - sc_pos_ICRS
 
-        self._ports["out_earth_pos_icrs"].shift_out(sc_earth_icrs.get_xyz().si.value)
-        self._ports["out_earth_unit_icrs"].shift_out(
+        self._o.out_earth_pos_icrs.shift_out(sc_earth_icrs.get_xyz().si.value)
+        self._o.out_earth_unit_icrs.shift_out(
             sc_earth_icrs.get_xyz().si.value
             / np.linalg.norm(sc_earth_icrs.get_xyz().si.value)
         )
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o

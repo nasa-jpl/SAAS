@@ -1,4 +1,4 @@
-from typing import Dict, Union
+from typing import Dict, Union, NamedTuple
 import numpy as np
 from scipy.spatial.transform import Rotation
 from scipy.optimize import minimize
@@ -7,6 +7,17 @@ from math import degrees
 from syssim import Node, InputPort, OutputPort
 from syssim.core.port import InputPort, OutputPort
 
+
+class NodePointingNadirInputs(NamedTuple):
+    input_pos_eci: InputPort
+    input_v_eci: InputPort
+    input_s_b: InputPort
+
+class NodePointingNadirOutputs(NamedTuple):
+    output_q_cmd: OutputPort
+    output_w_cmd: OutputPort
+    output_gimbal_cmd: OutputPort
+    output_nadir: OutputPort
 
 class NodePointingNadir(Node):
     def __init__(self, **kwargs):
@@ -24,26 +35,19 @@ class NodePointingNadir(Node):
 
 
         """
-        input_pos_eci = InputPort("input_r_eci", self)
-        input_v_eci = InputPort("input_v_eci", self)
-        input_s_b = InputPort("input_s_b", self)
+        self._i = NodePointingNadirInputs(
+            InputPort("input_r_eci", self),
+            InputPort("input_v_eci", self),
+            InputPort("input_s_b", self)
+        )
+        self._o = NodePointingNadirOutputs(
+            OutputPort("output_q_cmd", self),
+            OutputPort("output_w_cmd", self),
+            OutputPort("output_gimbal_cmd", self),
+            OutputPort("output_nadir", self)
+        )
 
-        output_q_cmd = OutputPort("output_q_cmd", self)
-        output_w_cmd = OutputPort("output_w_cmd", self)
-        output_gimbal_cmd = OutputPort("output_gimbal_cmd", self)
-        output_nadir = OutputPort("output_nadir", self)
-
-        ports = {
-            input_pos_eci.name: input_pos_eci,
-            input_v_eci.name: input_v_eci,
-            input_s_b.name: input_s_b,
-            output_q_cmd.name: output_q_cmd,
-            output_w_cmd.name: output_w_cmd,
-            output_gimbal_cmd.name: output_gimbal_cmd,
-            output_nadir.name: output_nadir,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, self._o, **kwargs)
 
     # def initialize(self):
     #     self._prev_q = [0, 0, 0, 1]
@@ -57,15 +61,15 @@ class NodePointingNadir(Node):
         #     return  # skip if in the wrong flight state
 
         # TODO should revisit if these default values make sense. We might want to just fail here.
-        r_eci = self._ports["input_r_eci"].read()
+        r_eci = self._i.input_pos_eci.read()
         if np.any(r_eci) == None:
             r_eci = np.ones((3,))
-        v_eci = self._ports["input_v_eci"].read()
+        v_eci = self._i.input_v_eci.read()
         if np.any(v_eci) == None:
             v_eci = np.ones((3,))
 
         # If no secondary body axis, use y
-        s_b = self._ports["input_s_b"].read()
+        s_b = self._i.input_s_b.read()
         if np.any(s_b) == None:
             s_b = np.array([0, 1, 0])
 
@@ -104,32 +108,44 @@ class NodePointingNadir(Node):
         # Angular velocity comand feed forward
         w_cmd = v_norm / r_norm * s_b_unit
 
-        self._ports["output_q_cmd"].shift_out(
+        self._o.output_q_cmd.shift_out(
             np.array([q_cmd[3], q_cmd[0], q_cmd[1], q_cmd[2]])
         )
-        self._ports["output_w_cmd"].shift_out(w_cmd)
-        self._ports["output_nadir"].shift_out(nadir)
-        self._ports["output_gimbal_cmd"].shift_out(np.array([0.0]))
+        self._o.output_w_cmd.shift_out(w_cmd)
+        self._o.output_nadir.shift_out(nadir)
+        self._o.output_gimbal_cmd.shift_out(np.array([0.0]))
 
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
+
+class NodePointingSunStuckInputs(NamedTuple):
+    in_sun_normal: InputPort
+    in_earth_normal: InputPort
+    """Inputs for the NodePointingSunStuck node."""
+
+class NodePointingSunStuckOutputs(NamedTuple):
+    output_q_cmd: OutputPort
+    output_w_cmd: OutputPort
+    output_sp_gimbal: OutputPort
 
 class NodePointingSunStuck(Node):
     def __init__(self, **kwargs):
-        in_sun_normal = InputPort("in_sun_n", self)
-        in_earth_normal = InputPort("in_earth_n", self)
+        self._i = NodePointingSunStuckInputs(
+            InputPort("in_sun_n", self),
+            InputPort("in_earth_n", self)
+        )
+        self._o = NodePointingSunStuckOutputs(
+            OutputPort("output_q_cmd", self),
+            OutputPort("output_w_cmd", self),
+            OutputPort("output_sp_gimbal", self)
+        )
 
-        output_q_cmd = OutputPort("output_q_cmd", self)
-        output_w_cmd = OutputPort("output_w_cmd", self)
-        output_sp_gimbal = OutputPort("output_sp_gimbal", self)
-
-        ports = {
-            in_sun_normal.name: in_sun_normal,
-            in_earth_normal.name: in_earth_normal,
-            output_q_cmd.name: output_q_cmd,
-            output_w_cmd.name: output_w_cmd,
-            output_sp_gimbal.name: output_sp_gimbal,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, self._o, **kwargs)
 
     def initialize(self):
         self._gimbal = 0  # Set up initial gimbal guess
@@ -142,8 +158,8 @@ class NodePointingSunStuck(Node):
         if sim_time == 0:
             return  # skip first iteration
 
-        sun_n = self._ports["in_sun_n"].read()
-        earth_n = self._ports["in_earth_n"].read()
+        sun_n = self._i.in_sun_normal.read()
+        earth_n = self._i.in_earth_normal.read()
 
         r_sc2ss, _ = Rotation.align_vectors(
             [sun_n, earth_n],
@@ -169,31 +185,42 @@ class NodePointingSunStuck(Node):
 
         q_cmd = r_sc2icrs.as_quat(canonical=True)
 
-        self._ports["output_q_cmd"].shift_out(
+        self._o.output_q_cmd.shift_out(
             np.array([q_cmd[3], q_cmd[0], q_cmd[1], q_cmd[2]])
         )
-        self._ports["output_w_cmd"].shift_out(np.zeros((3,)))
-        self._ports["output_sp_gimbal"].shift_out(-gimbal_angle)
+        self._o.output_w_cmd.shift_out(np.zeros((3,)))
+        self._o.output_sp_gimbal.shift_out(-gimbal_angle)
 
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
+
+class NodePointingComInputs(NamedTuple):
+    in_sun_normal: InputPort
+    in_earth_normal: InputPort
+
+class NodePointingComOutputs(NamedTuple):
+    output_q_cmd: OutputPort
+    output_w_cmd: OutputPort
+    output_sp_gimbal: OutputPort
 
 class NodePointingCom(Node):
     def __init__(self, **kwargs):
-        in_sun_normal = InputPort("in_sun_n", self)
-        in_earth_normal = InputPort("in_earth_n", self)
+        self._i = NodePointingComInputs(
+            InputPort("in_sun_n", self),
+            InputPort("in_earth_n", self)
+        )
+        self._o = NodePointingComOutputs(
+            OutputPort("output_q_cmd", self),
+            OutputPort("output_w_cmd", self),
+            OutputPort("output_sp_gimbal", self)
+        )
 
-        output_q_cmd = OutputPort("output_q_cmd", self)
-        output_w_cmd = OutputPort("output_w_cmd", self)
-        output_sp_gimbal = OutputPort("output_sp_gimbal", self)
-
-        ports = {
-            in_sun_normal.name: in_sun_normal,
-            in_earth_normal.name: in_earth_normal,
-            output_q_cmd.name: output_q_cmd,
-            output_w_cmd.name: output_w_cmd,
-            output_sp_gimbal.name: output_sp_gimbal,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, self._o, **kwargs)
 
     def initialize(self):
         self._gimbal = 0  # Set up initial gimbal guess
@@ -209,8 +236,8 @@ class NodePointingCom(Node):
         # if fs_state != SimpleFlightState.EARTH_SUN_COM:
         #     return  # skip if in the wrong flight state
 
-        sun_n = self._ports["in_sun_n"].read()
-        earth_n = self._ports["in_earth_n"].read()
+        sun_n = self._i.in_sun_normal.read()
+        earth_n = self._i.in_earth_normal.read()
 
         r_sc2com, _ = Rotation.align_vectors(
             [earth_n, sun_n], [self._antenna_body, np.array([0, 0, 1])], [1.0, 0.1]
@@ -229,29 +256,40 @@ class NodePointingCom(Node):
 
         q_cmd = r_sc2com.as_quat(canonical=True)
 
-        self._ports["output_q_cmd"].shift_out(
+        self._o.output_q_cmd.shift_out(
             np.array([q_cmd[3], q_cmd[0], q_cmd[1], q_cmd[2]])
         )
-        self._ports["output_w_cmd"].shift_out(np.zeros((3,)))
-        self._ports["output_sp_gimbal"].shift_out(gimbal_angle)
+        self._o.output_w_cmd.shift_out(np.zeros((3,)))
+        self._o.output_sp_gimbal.shift_out(gimbal_angle)
 
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
+
+class NodePointingCoolingInputs(NamedTuple):
+    in_sun_normal: InputPort
+
+class NodePointingCoolingOutputs(NamedTuple):
+    output_q_cmd: OutputPort
+    output_w_cmd: OutputPort
+    output_sp_gimbal: OutputPort
 
 class NodePointingCooling(Node):
     def __init__(self, **kwargs):
-        in_sun_normal = InputPort("in_sun_n", self)
+        self._i = NodePointingCoolingInputs(
+            InputPort("in_sun_n", self)
+        )
+        self._o = NodePointingCoolingOutputs(
+            OutputPort("output_q_cmd", self),
+            OutputPort("output_w_cmd", self),
+            OutputPort("output_sp_gimbal", self)
+        )
 
-        output_q_cmd = OutputPort("output_q_cmd", self)
-        output_w_cmd = OutputPort("output_w_cmd", self)
-        output_sp_gimbal = OutputPort("output_sp_gimbal", self)
-
-        ports = {
-            in_sun_normal.name: in_sun_normal,
-            output_q_cmd.name: output_q_cmd,
-            output_w_cmd.name: output_w_cmd,
-            output_sp_gimbal.name: output_sp_gimbal,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, self._o, **kwargs)
 
     def initialize(self):
         self._gimbal = 0  # Set up initial gimbal guess
@@ -266,7 +304,7 @@ class NodePointingCooling(Node):
         # if fs_state != SimpleFlightState.COOLING:
         #     return  # skip if in the wrong flight state
 
-        sun_n = self._ports["in_sun_n"].read()
+        sun_n = self._i.in_sun_normal.read()
 
         r_sc2cool, _ = Rotation.align_vectors(
             [sun_n, np.array([0, 0, 1])],
@@ -287,8 +325,16 @@ class NodePointingCooling(Node):
 
         q_cmd = r_sc2cool.as_quat(canonical=True)
 
-        self._ports["output_q_cmd"].shift_out(
+        self._o.output_q_cmd.shift_out(
             np.array([q_cmd[3], q_cmd[0], q_cmd[1], q_cmd[2]])
         )
-        self._ports["output_w_cmd"].shift_out(np.zeros((3,)))
-        self._ports["output_sp_gimbal"].shift_out(gimbal_angle)
+        self._o.output_w_cmd.shift_out(np.zeros((3,)))
+        self._o.output_sp_gimbal.shift_out(gimbal_angle)
+
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o

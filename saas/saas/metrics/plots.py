@@ -1,4 +1,4 @@
-from typing import Dict, Union
+from typing import Dict, Union, NamedTuple
 import numpy as np
 import matplotlib.pyplot as plt
 from syssim.core import Node, InputPort
@@ -6,27 +6,28 @@ from saas.utility.plotting import add_fault_vbars, add_fault_detect_vline
 from syssim.core.port import InputPort
 
 
+class NodeMetricPointingErrorInputs(NamedTuple):
+    in_cmd_vec: InputPort
+    in_meas_vec: InputPort
+    in_start_datetime: InputPort
+
 class NodeMetricPointingError(Node):
     def __init__(self, **kwargs):
-        in_cmd_vec = InputPort("input_cmd_vec", self)
-        in_meas_vec = InputPort("input_meas_vec", self)
-        in_start_datetime = InputPort("in_start_datetime", self)
+        self._i = NodeMetricPointingErrorInputs(
+            InputPort("input_cmd_vec", self),
+            InputPort("input_meas_vec", self),
+            InputPort("in_start_datetime", self)
+        )
 
-        ports = {
-            in_cmd_vec.name: in_cmd_vec,
-            in_meas_vec.name: in_meas_vec,
-            in_start_datetime.name: in_start_datetime,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, (), **kwargs)
 
     def initialize(self):
         self._t = []
         self._error = []
 
     def update(self, sim_time: float):
-        cmd_vec = self._ports["input_cmd_vec"].read()
-        meas_vec = self._ports["input_meas_vec"].read()
+        cmd_vec = self._i.in_cmd_vec.read()
+        meas_vec = self._i.in_meas_vec.read()
 
         # Angle between the vectors
         error = np.arccos(
@@ -42,7 +43,7 @@ class NodeMetricPointingError(Node):
         else:
             plt.style.use("default")
 
-        t0 = self._ports["in_start_datetime"].read()
+        t0 = self._i.in_start_datetime.read()
 
         title = self._config["title"]
         ylabel = self._config["ylabel"]
@@ -79,20 +80,29 @@ class NodeMetricPointingError(Node):
 
         plt.close(plt.gcf())
 
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
+
+
+class NodeMetricSoCTemperatureInputs(NamedTuple):
+    in_soc: InputPort
+    in_temp: InputPort
+    in_start_datetime: InputPort
 
 class NodeMetricSoCTemperature(Node):
     def __init__(self, **kwargs):
-        in_soc = InputPort("in_soc", self)
-        in_temp = InputPort("in_temp", self)
-        in_start_datetime = InputPort("in_start_datetime", self)
+        self._i = NodeMetricSoCTemperatureInputs(
+            InputPort("in_soc", self),
+            InputPort("in_temp", self),
+            InputPort("in_start_datetime", self)
+        )
 
-        ports = {
-            in_soc.name: in_soc,
-            in_temp.name: in_temp,
-            in_start_datetime.name: in_start_datetime,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, (), **kwargs)
 
     def initialize(self):
         self._t = []
@@ -101,8 +111,8 @@ class NodeMetricSoCTemperature(Node):
 
     def update(self, sim_time: float):
         self._t.append(sim_time / 3600)
-        self._soc.append(self._ports["in_soc"].read())
-        self._k.append(self._ports["in_temp"].read())
+        self._soc.append(self._i.in_soc.read())
+        self._k.append(self._i.in_temp.read())
 
     def finalize(self):
         if self._config["dark_mode"]:
@@ -110,7 +120,7 @@ class NodeMetricSoCTemperature(Node):
         else:
             plt.style.use("default")
 
-        t0 = self._ports["in_start_datetime"].read()
+        t0 = self._i.in_start_datetime.read()
 
         title = self._config["title"]
 
@@ -122,13 +132,6 @@ class NodeMetricSoCTemperature(Node):
         k_ax.set_ylabel("S/C Temperature (K)")
         soc_ax.set_xlabel(f"t + {t0.strftime('%Y-%m-%d %H:%M:%S')} (hr)")
         plt.xlim(self._t[0], self._t[-1])
-
-        # avg_error = np.average(self._error)
-        # max_error = np.max(self._error)
-
-        # plt.hlines([avg_error], [0], [self._t[-1]], ["g"], label="avg")
-
-        # plt.hlines([max_error], [0], [self._t[-1]], ["r"], label="max")
 
         line1 = soc_ax.plot(self._t, self._soc, label="SoC", color="green")
         line2 = k_ax.plot(self._t, self._k, label="S/C Temp", color="red")
@@ -153,20 +156,29 @@ class NodeMetricSoCTemperature(Node):
 
         plt.close(plt.gcf())
 
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
+
+
+class NodeMetricScienceInputs(NamedTuple):
+    in_sci: InputPort
+    in_sci_dl: InputPort
+    in_start_datetime: InputPort
 
 class NodeMetricScience(Node):
     def __init__(self, **kwargs):
-        in_sci = InputPort("in_science", self)
-        in_sci_dl = InputPort("in_science_dl", self)
-        in_start_datetime = InputPort("in_start_datetime", self)
+        self._i = NodeMetricScienceInputs(
+            InputPort("in_science", self),
+            InputPort("in_science_dl", self),
+            InputPort("in_start_datetime", self)
+        )
 
-        ports = {
-            in_sci.name: in_sci,
-            in_sci_dl.name: in_sci_dl,
-            in_start_datetime.name: in_start_datetime,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, (), **kwargs)
 
     def initialize(self):
         self._t = []
@@ -175,8 +187,8 @@ class NodeMetricScience(Node):
 
     def update(self, sim_time: float):
         self._t.append(sim_time / 3600)
-        self._s.append(self._ports["in_science"].read())
-        self._d.append(self._ports["in_science_dl"].read())
+        self._s.append(self._i.in_sci.read())
+        self._d.append(self._i.in_sci_dl.read())
 
     def finalize(self):
         if self._config["dark_mode"]:
@@ -184,7 +196,7 @@ class NodeMetricScience(Node):
         else:
             plt.style.use("default")
             
-        t0 = self._ports["in_start_datetime"].read()
+        t0 = self._i.in_start_datetime.read()
 
         title = self._config["title"]
 
@@ -210,7 +222,6 @@ class NodeMetricScience(Node):
         labels = [line.get_label() for line in lines]
         d_ax.legend(lines, labels, loc="upper left").set_zorder(10.0)
 
-
         if self._config["show"]:
             plt.show()
 
@@ -220,3 +231,11 @@ class NodeMetricScience(Node):
             )
 
         plt.close(plt.gcf())
+
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o

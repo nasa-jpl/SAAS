@@ -1,6 +1,6 @@
 from enum import Enum
 from collections import deque
-from typing import Dict, Union
+from typing import Dict, Union, NamedTuple
 
 import numpy as np
 
@@ -23,6 +23,34 @@ class SafeModeTask(str, Enum):
     DL = "downlink"
 
 
+class NodeSimpleFlightSoftwareInputs(NamedTuple):
+    in_point_err: InputPort
+    in_q_cmd_nadir: InputPort
+    in_q_cmd_ss: InputPort
+    in_q_cmd_com: InputPort
+    in_q_cmd_cool: InputPort
+    in_w_cmd_nadir: InputPort
+    in_w_cmd_ss: InputPort
+    in_w_cmd_com: InputPort
+    in_w_cmd_cool: InputPort
+    in_w_gimbal_nadir: InputPort
+    in_w_gimbal_ss: InputPort
+    in_w_gimbal_com: InputPort
+    in_w_gimbal_cool: InputPort
+    in_sc_temp: InputPort
+    in_sc_soc: InputPort
+    in_is_occluded_earth: InputPort
+    in_is_occluded_sun: InputPort
+    in_is_fault: InputPort
+
+class NodeSimpleFlightSoftwareOutputs(NamedTuple):
+    out_state: OutputPort
+    out_science: OutputPort
+    out_science_dl: OutputPort
+    out_q_cmd: OutputPort
+    out_w_cmd: OutputPort
+    out_solar_gimbal_cmd: OutputPort
+
 class NodeSimpleFlightSoftware(Node):
     def __init__(self, **kwargs):
         """
@@ -41,66 +69,36 @@ class NodeSimpleFlightSoftware(Node):
         - total science downlinked
         """
 
-        in_point_err = InputPort("in_point_err", self)
+        self._i = NodeSimpleFlightSoftwareInputs(
+            InputPort("in_point_err", self),
+            InputPort("in_q_cmd_nadir", self),
+            InputPort("in_q_cmd_ss", self),
+            InputPort("in_q_cmd_com", self),
+            InputPort("in_q_cmd_cool", self),
+            InputPort("in_w_cmd_nadir", self),
+            InputPort("in_w_cmd_ss", self),
+            InputPort("in_w_cmd_com", self),
+            InputPort("in_w_cmd_cool", self),
+            InputPort("in_gimbal_cmd_nadir", self),
+            InputPort("in_gimbal_cmd_ss", self),
+            InputPort("in_gimbal_cmd_com", self),
+            InputPort("in_gimbal_cmd_cool", self),
+            InputPort("in_sc_temp", self),
+            InputPort("in_sc_soc", self),
+            InputPort("in_is_occluded_earth", self),
+            InputPort("in_is_occluded_sun", self),
+            InputPort("in_is_fault", self)
+        )
+        self._o = NodeSimpleFlightSoftwareOutputs(
+            OutputPort("out_fs_state", self),
+            OutputPort("out_science", self),
+            OutputPort("out_science_downlinked", self),
+            OutputPort("out_q_cmd", self),
+            OutputPort("out_w_cmd", self),
+            OutputPort("out_solar_gimbal", self)
+        )
 
-        in_q_cmd_nadir = InputPort("in_q_cmd_nadir", self)
-        in_q_cmd_ss = InputPort("in_q_cmd_ss", self)
-        in_q_cmd_com = InputPort("in_q_cmd_com", self)
-        in_q_cmd_cool = InputPort("in_q_cmd_cool", self)
-
-        in_w_cmd_nadir = InputPort("in_w_cmd_nadir", self)
-        in_w_cmd_ss = InputPort("in_w_cmd_ss", self)
-        in_w_cmd_com = InputPort("in_w_cmd_com", self)
-        in_w_cmd_cool = InputPort("in_w_cmd_cool", self)
-
-        in_w_gimbal_nadir = InputPort("in_gimbal_cmd_nadir", self)
-        in_w_gimbal_ss = InputPort("in_gimbal_cmd_ss", self)
-        in_w_gimbal_com = InputPort("in_gimbal_cmd_com", self)
-        in_w_gimbal_cool = InputPort("in_gimbal_cmd_cool", self)
-
-        in_sc_temp = InputPort("in_sc_temp", self)
-        in_sc_soc = InputPort("in_sc_soc", self)
-
-        in_is_occluded_earth = InputPort("in_is_occluded_earth", self)
-        in_is_occluded_sun = InputPort("in_is_occluded_sun", self)
-
-        in_is_fault = InputPort("in_is_fault", self)
-
-        out_state = OutputPort("out_fs_state", self)
-        out_science = OutputPort("out_science", self)
-        out_science_dl = OutputPort("out_science_downlinked", self)
-        out_q_cmd = OutputPort("out_q_cmd", self)
-        out_w_cmd = OutputPort("out_w_cmd", self)
-        out_solar_gimbal_cmd = OutputPort("out_solar_gimbal", self)
-
-        ports = {
-            in_point_err.name: in_point_err,
-            in_q_cmd_nadir.name: in_q_cmd_nadir,
-            in_q_cmd_ss.name: in_q_cmd_ss,
-            in_q_cmd_com.name: in_q_cmd_com,
-            in_q_cmd_cool.name: in_q_cmd_cool,
-            in_w_cmd_nadir.name: in_w_cmd_nadir,
-            in_w_cmd_ss.name: in_w_cmd_ss,
-            in_w_cmd_com.name: in_w_cmd_com,
-            in_w_cmd_cool.name: in_w_cmd_cool,
-            in_w_gimbal_nadir.name: in_w_gimbal_nadir,
-            in_w_gimbal_ss.name: in_w_gimbal_ss,
-            in_w_gimbal_com.name: in_w_gimbal_com,
-            in_w_gimbal_cool.name: in_w_gimbal_cool,
-            in_sc_temp.name: in_sc_temp,
-            in_sc_soc.name: in_sc_soc,
-            in_is_occluded_earth.name: in_is_occluded_earth,
-            in_is_occluded_sun.name: in_is_occluded_sun,
-            in_is_fault.name: in_is_fault,
-            out_state.name: out_state,
-            out_science.name: out_science,
-            out_science_dl.name: out_science_dl,
-            out_q_cmd.name: out_q_cmd,
-            out_w_cmd.name: out_w_cmd,
-            out_solar_gimbal_cmd.name: out_solar_gimbal_cmd,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, self._o, **kwargs)
 
     def initialize(self):
         self._state = SimpleFlightState.SCIENCE
@@ -140,11 +138,11 @@ class NodeSimpleFlightSoftware(Node):
         # self._ts = []
 
     def update(self, sim_time: float):
-        soc = self._ports["in_sc_soc"].read()
-        temp = self._ports["in_sc_temp"].read()
-        fault = self._ports["in_is_fault"].read()
+        soc = self._i.in_sc_soc.read()
+        temp = self._i.in_sc_temp.read()
+        fault = self._i.in_is_fault.read()
 
-        self._err_filt_data.append(np.linalg.norm(self._ports["in_point_err"].read()))
+        self._err_filt_data.append(np.linalg.norm(self._i.in_point_err.read()))
 
         if fault:
             self._state = SimpleFlightState.SAFE
@@ -163,14 +161,14 @@ class NodeSimpleFlightSoftware(Node):
             self._state_safe(sim_time, soc, temp)
 
         if self._state == SimpleFlightState.SAFE:
-            self._ports["out_fs_state"].shift_out(
+            self._o.out_fs_state.shift_out(
                 f"{self._state}->{self._safe_mode_task}"
             )
         else:
-            self._ports["out_fs_state"].shift_out(f"{self._state}")
+            self._o.out_state.shift_out(f"{self._state}")
 
-        self._ports["out_science"].shift_out(self._science)
-        self._ports["out_science_downlinked"].shift_out(self._science_dl)
+        self._o.out_science.shift_out(self._science)
+        self._o.out_science_dl.shift_out(self._science_dl)
 
         self._t = sim_time
 
@@ -190,9 +188,9 @@ class NodeSimpleFlightSoftware(Node):
         self._science += self._science_model(dt)
         self._science = np.clip(self._science, 0, self._max_science)
 
-        self._ports["out_q_cmd"].shift_out(self._ports["in_q_cmd_nadir"].read())
-        self._ports["out_w_cmd"].shift_out(self._ports["in_w_cmd_nadir"].read())
-        self._ports["out_solar_gimbal"].shift_out(np.array([np.radians(0.0)]))
+        self._o.out_q_cmd.shift_out(self._i.in_q_cmd_nadir.read())
+        self._o.out_w_cmd.shift_out(self._i.in_w_cmd_nadir.read())
+        self._o.out_solar_gimbal_cmd.shift_out(np.array([np.radians(0.0)]))
 
         # process mode transitions
         # TO DOWNLINK
@@ -212,10 +210,10 @@ class NodeSimpleFlightSoftware(Node):
             self._state = SimpleFlightState.SAFE
 
     def _state_sun_stuck(self, ts: float, soc: float, temp: float):
-        self._ports["out_q_cmd"].shift_out(self._ports["in_q_cmd_ss"].read())
-        self._ports["out_w_cmd"].shift_out(self._ports["in_w_cmd_ss"].read())
-        self._ports["out_solar_gimbal"].shift_out(
-            self._ports["in_gimbal_cmd_ss"].read()
+        self._o.out_q_cmd.shift_out(self._i.in_q_cmd_ss.read())
+        self._o.out_w_cmd.shift_out(self._i.in_w_cmd_ss.read())
+        self._o.out_solar_gimbal_cmd.shift_out(
+            self._i.in_w_gimbal_ss.read()
         )
 
         # Mode transitions
@@ -235,10 +233,10 @@ class NodeSimpleFlightSoftware(Node):
             self._state = SimpleFlightState.SAFE
 
     def _state_es_com(self, ts: float, soc: float, temp: float):
-        self._ports["out_q_cmd"].shift_out(self._ports["in_q_cmd_com"].read())
-        self._ports["out_w_cmd"].shift_out(self._ports["in_w_cmd_com"].read())
-        self._ports["out_solar_gimbal"].shift_out(
-            self._ports["in_gimbal_cmd_com"].read()
+        self._o.out_q_cmd.shift_out(self._i.in_q_cmd_com.read())
+        self._o.out_w_cmd.shift_out(self._i.in_w_cmd_com.read())
+        self._o.out_solar_gimbal_cmd.shift_out(
+            self._i.in_w_gimbal_com.read()
         )
 
         dt = ts - self._t
@@ -269,10 +267,10 @@ class NodeSimpleFlightSoftware(Node):
             self._state = SimpleFlightState.SAFE
 
     def _state_cooling(self, ts: float, soc: float, temp: float):
-        self._ports["out_q_cmd"].shift_out(self._ports["in_q_cmd_cool"].read())
-        self._ports["out_w_cmd"].shift_out(self._ports["in_w_cmd_cool"].read())
-        self._ports["out_solar_gimbal"].shift_out(
-            self._ports["in_gimbal_cmd_cool"].read()
+        self._o.out_q_cmd.shift_out(self._i.in_q_cmd_cool.read())
+        self._o.out_w_cmd.shift_out(self._i.in_w_cmd_cool.read())
+        self._o.out_solar_gimbal_cmd.shift_out(
+            self._i.in_w_gimbal_cool.read()
         )
 
         # Mode transitions
@@ -294,8 +292,8 @@ class NodeSimpleFlightSoftware(Node):
     def _state_safe(self, ts: float, soc: float, temp: float):
         # Maintain temp and state of charge
         # Periodically go to com if temp and soc okay
-        # is_earth_occluded = self._ports["in_is_occluded_earth"].read()
-        # is_sun_occluded = self._ports["in_is_occluded_sun"].read()
+        # is_earth_occluded = self._i.in_is_occluded_earth.read()
+        # is_sun_occluded = self._i.in_is_occluded_sun.read()
 
         # if self._prev_safe_dl_time == None:
         #     self._prev_safe_dl_time = ts
@@ -334,22 +332,22 @@ class NodeSimpleFlightSoftware(Node):
         self._safe_mode_task = self._next_safe_task(ts, soc, temp)
 
         if self._safe_mode_task == SafeModeTask.CHARGE:
-            self._ports["out_q_cmd"].shift_out(self._ports["in_q_cmd_ss"].read())
-            self._ports["out_w_cmd"].shift_out(self._ports["in_w_cmd_ss"].read())
-            self._ports["out_solar_gimbal"].shift_out(
-                self._ports["in_gimbal_cmd_ss"].read()
+            self._o.out_q_cmd.shift_out(self._i.in_q_cmd_ss.read())
+            self._o.out_w_cmd.shift_out(self._i.in_w_cmd_ss.read())
+            self._o.out_solar_gimbal_cmd.shift_out(
+                self._i.in_w_gimbal_ss.read()
             )
         elif self._safe_mode_task == SafeModeTask.COOL:
-            self._ports["out_q_cmd"].shift_out(self._ports["in_q_cmd_cool"].read())
-            self._ports["out_w_cmd"].shift_out(self._ports["in_w_cmd_cool"].read())
-            self._ports["out_solar_gimbal"].shift_out(
-                self._ports["in_gimbal_cmd_cool"].read()
+            self._o.out_q_cmd.shift_out(self._i.in_q_cmd_cool.read())
+            self._o.out_w_cmd.shift_out(self._i.in_w_cmd_cool.read())
+            self._o.out_solar_gimbal_cmd.shift_out(
+                self._i.in_w_gimbal_cool.read()
             )
         elif self._safe_mode_task == SafeModeTask.DL:
-            self._ports["out_q_cmd"].shift_out(self._ports["in_q_cmd_com"].read())
-            self._ports["out_w_cmd"].shift_out(self._ports["in_w_cmd_com"].read())
-            self._ports["out_solar_gimbal"].shift_out(
-                self._ports["in_gimbal_cmd_com"].read()
+            self._o.out_q_cmd.shift_out(self._i.in_q_cmd_com.read())
+            self._o.out_w_cmd.shift_out(self._i.in_w_cmd_com.read())
+            self._o.out_solar_gimbal_cmd.shift_out(
+                self._i.in_w_gimbal_com.read()
             )
             # if ts - self._prev_safe_dl_duration > self._dl_try_duration:
             #     self._prev_safe_dl_time = ts
@@ -364,7 +362,7 @@ class NodeSimpleFlightSoftware(Node):
             return 0
 
     def _science_dl_model(self, dt: float) -> float:
-        is_earth_occluded = self._ports["in_is_occluded_earth"].read()
+        is_earth_occluded = self._i.in_is_occluded_earth.read()
         err_stdv = np.std(self._err_filt_data)
         if is_earth_occluded:
             return 0
@@ -378,8 +376,8 @@ class NodeSimpleFlightSoftware(Node):
     def _next_safe_task(self, ts: float, soc: float, temp: float):
         k_percent = (self._warn_temp - temp) / (self._warn_temp - self._nominal_temp)
 
-        is_earth_occluded = self._ports["in_is_occluded_earth"].read()
-        is_sun_occluded = self._ports["in_is_occluded_sun"].read()
+        is_earth_occluded = self._i.in_is_occluded_earth.read()
+        is_sun_occluded = self._i.in_is_occluded_sun.read()
 
         # err_s = self._nominal_soc - soc
         # err_k = 1.0 - k_percent
@@ -441,21 +439,33 @@ class NodeSimpleFlightSoftware(Node):
         else:
             return True
 
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
+
+
+class NodeFaultProtectionMGSInputs(NamedTuple):
+    in_gimbal_cmd: InputPort
+    in_gimbal_measure: InputPort
+
+class NodeFaultProtectionMGSOutputs(NamedTuple):
+    out_gimbal_fault: OutputPort
 
 class NodeFaultProtectionMGS(NodeDifferential):
     def __init__(self, **kwargs):
-        in_gimbal_cmd = InputPort("in_gimbal_cmd", self)
-        in_gimbal_measure = InputPort("in_gimbal_measure", self)
+        self._i = NodeFaultProtectionMGSInputs(
+            InputPort("in_gimbal_cmd", self),
+            InputPort("in_gimbal_measure", self)
+        )
+        self._o = NodeFaultProtectionMGSOutputs(
+            OutputPort("out_gimbal_fault", self)
+        )
 
-        out_gimbal_fault = OutputPort("out_gimbal_fault", self)
-
-        ports = {
-            in_gimbal_cmd.name: in_gimbal_cmd,
-            in_gimbal_measure.name: in_gimbal_measure,
-            out_gimbal_fault.name: out_gimbal_fault,
-        }
-
-        super().__init__(None, ports, **kwargs)
+        super().__init__(None, self._i, self._o, **kwargs)
 
     def initialize(self):
         self._threshold = np.radians(self._config["monitor-threshold"])
@@ -465,8 +475,8 @@ class NodeFaultProtectionMGS(NodeDifferential):
         self._last_dg = None
 
     def update(self, sim_time: float):
-        g_cmd = self._ports["in_gimbal_cmd"].read()
-        g_meas = self._ports["in_gimbal_measure"].read()
+        g_cmd = self._i.in_gimbal_cmd.read()
+        g_meas = self._i.in_gimbal_measure.read()
         if g_cmd == None:
             g_cmd = np.array([0])
 
@@ -475,7 +485,7 @@ class NodeFaultProtectionMGS(NodeDifferential):
         dg = np.abs(g_cmd - g_meas)
 
         if self._trig == True:
-            self._ports["out_gimbal_fault"].shift_out(self._trig)
+            self._o.out_gimbal_fault.shift_out(self._trig)
         else:
             exceed = np.any(dg > self._threshold)
             if self._last_dg != None:
@@ -498,4 +508,12 @@ class NodeFaultProtectionMGS(NodeDifferential):
                     self._system.detect_fault("gimbal fault", sim_time)
 
             self._last_dg = dg
-            self._ports["out_gimbal_fault"].shift_out(self._trig)
+            self._o.out_gimbal_fault.shift_out(self._trig)
+
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o

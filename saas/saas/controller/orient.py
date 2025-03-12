@@ -1,6 +1,22 @@
 import numpy as np
 
 from syssim import NodeDifferential, InputPort, OutputPort
+from typing import NamedTuple
+
+
+class NodePointingControlSimpleInputs(NamedTuple):
+    input_q_cmd: InputPort
+    input_q: InputPort
+    input_w_cmd: InputPort
+    input_w: InputPort
+    input_mtm_int: InputPort
+    input_sc_inertia_moment: InputPort
+
+
+class NodePointingControlSimpleOutputs(NamedTuple):
+    output_tau_cmd: OutputPort
+    output_q_err: OutputPort
+    output_w_err: OutputPort
 
 
 class NodePointingControlSimple(NodeDifferential):
@@ -29,30 +45,22 @@ class NodePointingControlSimple(NodeDifferential):
             i_mag_limit = limit on the magnitude of the integral term
             i_enable_limit = limit on the error under which to enable the integral term
         """
-        input_q_cmd = InputPort("input_q_cmd", self)
-        input_q = InputPort("input_q", self)
-        input_w_cmd = InputPort("input_w_cmd", self)
-        input_w = InputPort("input_w", self)
-        input_mtm_internal = InputPort("input_mtm_int", self)
-        input_sc_inertia_moment = InputPort("input_sc_inertia_moment", self)
+        self._i = NodePointingControlSimpleInputs(
+            InputPort("input_q_cmd", self),
+            InputPort("input_q", self),
+            InputPort("input_w_cmd", self),
+            InputPort("input_w", self),
+            InputPort("input_mtm_int", self),
+            InputPort("input_sc_inertia_moment", self)
+        )
 
-        output_tau_cmd = OutputPort("output_tau_cmd", self)
-        output_q_err = OutputPort("output_q_err", self)
-        output_w_err = OutputPort("output_w_err", self)
+        self._o = NodePointingControlSimpleOutputs(
+            OutputPort("output_tau_cmd", self),
+            OutputPort("output_q_err", self),
+            OutputPort("output_w_err", self)
+        )
 
-        ports = {
-            input_q_cmd.name: input_q_cmd,
-            input_q.name: input_q,
-            input_w_cmd.name: input_w_cmd,
-            input_w.name: input_w,
-            input_mtm_internal.name: input_mtm_internal,
-            input_sc_inertia_moment.name: input_sc_inertia_moment,
-            output_tau_cmd.name: output_tau_cmd,
-            output_q_err.name: output_q_err,
-            output_w_err.name: output_w_err,
-        }
-
-        super().__init__(x0, ports, **kwargs)
+        super().__init__(x0, self._i, self._o, **kwargs)
 
     def initialize(self):
         self._kp = self._config["pointing_kp"]
@@ -62,11 +70,11 @@ class NodePointingControlSimple(NodeDifferential):
         self._t = 0
 
     def update(self, sim_time: float):
-        self._inertia = self._ports["input_sc_inertia_moment"].read()
-        q_cmd = self._ports["input_q_cmd"].read()
+        self._inertia = self._i.input_sc_inertia_moment.read()
+        q_cmd = self._i.input_q_cmd.read()
         if np.any(q_cmd) is None:
             q_cmd = np.array([1, 0, 0, 0])
-        q = self._ports["input_q"].read()
+        q = self._i.input_q.read()
         if np.any(q) is None:
             q = np.array([1, 0, 0, 0])
 
@@ -84,16 +92,16 @@ class NodePointingControlSimple(NodeDifferential):
 
         q_e_vec = (qc @ np.array([qx, qy, qz, qw]))[0:3]
 
-        w_cmd = self._ports["input_w_cmd"].read()
+        w_cmd = self._i.input_w_cmd.read()
         if np.any(w_cmd) is None:
             w_cmd = np.zeros((3,))
-        w = self._ports["input_w"].read()
+        w = self._i.input_w.read()
         if np.any(w) is None:
             w = np.zeros((3,))
 
         w_e = w_cmd - w
 
-        mtm_in = self._ports["input_mtm_int"].read()
+        mtm_in = self._i.input_mtm_int.read()
         if np.any(mtm_in) == None:
             mtm_in = np.zeros((3,))
 
@@ -105,9 +113,17 @@ class NodePointingControlSimple(NodeDifferential):
 
         u = self._output(self._x, q_e_vec, w_e, mtm_in, w)
 
-        self._ports["output_tau_cmd"].shift_out(u)
-        self._ports["output_q_err"].shift_out(q_e_vec)
-        self._ports["output_w_err"].shift_out(w_e)
+        self._o.output_tau_cmd.shift_out(u)
+        self._o.output_q_err.shift_out(q_e_vec)
+        self._o.output_w_err.shift_out(w_e)
+
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
 
     def _dynamics(self, q_e_vec: np.ndarray):
         return q_e_vec

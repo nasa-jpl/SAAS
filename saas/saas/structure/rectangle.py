@@ -2,30 +2,36 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from scipy.integrate import solve_ivp
 from syssim.core import NodeDifferential, InputPort, OutputPort
+from typing import NamedTuple
 
 
 # TODO Might consider renaming this module to thermal if that seems more appropriate.
 # TODO Might also consider driving inertia moment calcs through here instead of through the config
+
+class NodeSimpleRectanglePrismSCBusInputs(NamedTuple):
+    in_sun_unit: InputPort
+    in_solar_constant: InputPort
+    in_q_sc2eci: InputPort
+
+class NodeSimpleRectanglePrismSCBusOutputs(NamedTuple):
+    out_sc_temp: OutputPort
+    out_sc_mass: OutputPort
+    out_sc_inertia_moment: OutputPort
+
 class NodeSimpleRectanglePrismSCBus(NodeDifferential):
     def __init__(self, x0, **kwargs):
-        in_sun_unit = InputPort("in_sun_unit", self)
-        in_solar_constant = InputPort("in_solar_constant", self)
-        in_q_sc2eci = InputPort("in_q_sc2eci", self)
+        self._i = NodeSimpleRectanglePrismSCBusInputs(
+            InputPort("in_sun_unit", self),
+            InputPort("in_solar_constant", self),
+            InputPort("in_q_sc2eci", self)
+        )
+        self._o = NodeSimpleRectanglePrismSCBusOutputs(
+            OutputPort("out_sc_temp", self),
+            OutputPort("out_sc_mass", self),
+            OutputPort("out_sc_inertia_moment", self)
+        )
 
-        out_sc_temp = OutputPort("out_sc_temp", self)
-        out_sc_mass = OutputPort("out_sc_mass", self)
-        out_sc_inertia_moment = OutputPort("out_sc_inertia_moment", self)
-
-        ports = {
-            in_sun_unit.name: in_sun_unit,
-            in_solar_constant.name: in_solar_constant,
-            in_q_sc2eci.name: in_q_sc2eci,
-            out_sc_temp.name: out_sc_temp,
-            out_sc_mass.name: out_sc_mass,
-            out_sc_inertia_moment.name: out_sc_inertia_moment,
-        }
-
-        super().__init__(x0, ports, **kwargs)
+        super().__init__(x0, self._i, self._o, **kwargs)
 
     def initialize(self):
         self._t = 0
@@ -49,15 +55,15 @@ class NodeSimpleRectanglePrismSCBus(NodeDifferential):
         self._eps = self._config["emmisivity"]
         self._sig = 5.670374419e-8
 
-        self._ports["out_sc_mass"].shift_out(self._m)
-        self._ports["out_sc_inertia_moment"].shift_out(
+        self._o.out_sc_mass.shift_out(self._m)
+        self._o.out_sc_inertia_moment.shift_out(
             np.diag([self._i_x, self._i_y, self._i_z])
         )
 
     def update(self, sim_time: float):
-        q_sc2eci = self._ports["in_q_sc2eci"].read()
-        sun_unit = self._ports["in_sun_unit"].read()
-        solar_constant = self._ports["in_solar_constant"].read()
+        q_sc2eci = self._i.in_q_sc2eci.read()
+        sun_unit = self._i.in_sun_unit.read()
+        solar_constant = self._i.in_solar_constant.read()
 
         if np.any(q_sc2eci) == None:
             q_sc2eci = Rotation.identity()
@@ -78,7 +84,7 @@ class NodeSimpleRectanglePrismSCBus(NodeDifferential):
         self._t = sim_time
         self._x = sol.y[:, -1]
 
-        self._ports["out_sc_temp"].shift_out(self._x)
+        self._o.out_sc_temp.shift_out(self._x)
 
     def _dynamics(self, x, r_sc2eci, sun_flux_eci):
         a_eci = r_sc2eci.apply(self._a_sc.T)
@@ -93,3 +99,11 @@ class NodeSimpleRectanglePrismSCBus(NodeDifferential):
         p_absorbed = alpha * flux_total
         p_emmited = self._eps * self._sig * self._a_total * x**4
         return (p_absorbed - p_emmited) / (self._c * m)
+
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o

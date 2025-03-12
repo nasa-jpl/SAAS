@@ -2,6 +2,19 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 from syssim import NodeDifferential, InputPort, OutputPort
+from typing import NamedTuple
+
+
+class NodeRWASimpleInputs(NamedTuple):
+    tau_cmd: InputPort
+    """Commanded torque input"""
+
+
+class NodeRWASimpleOutputs(NamedTuple):
+    rwa_mtm: OutputPort
+    """Reaction wheel angular momentum vector"""
+    rwa_tau: OutputPort
+    """Output torque"""
 
 
 class NodeRWASimple(NodeDifferential):
@@ -19,19 +32,10 @@ class NodeRWASimple(NodeDifferential):
         Configs:
             rwa_inertia: diagonal of the reaction wheel assembly inertia moment. 3x1 [kg m^2]
         """
-        input_tau_cmd = InputPort("tau_cmd", self)
+        self._i = NodeRWASimpleInputs(InputPort("tau_cmd", self))
+        self._o = NodeRWASimpleOutputs(OutputPort("rwa_mtm", self), OutputPort("rwa_tau", self))
 
-        output_rwa_mtm = OutputPort("rwa_mtm", self)
-        output_rwa_tau = OutputPort("rwa_tau", self)
-
-        ports = {
-            input_tau_cmd.name: input_tau_cmd,
-            output_rwa_mtm.name: output_rwa_mtm,
-            output_rwa_tau.name: output_rwa_tau,
-        }
-
-        # State is the reaction wheel angular momentum in the S/C frame
-        super().__init__(x0, ports, **kwargs)
+        super().__init__(x0, self._i, self._o, **kwargs)
 
     def initialize(self):
         self._inertia = np.diag(self._config["rwa_inertia"])
@@ -39,7 +43,7 @@ class NodeRWASimple(NodeDifferential):
         self._t = 0
 
     def update(self, sim_time: float):
-        tau_cmd = self._ports["tau_cmd"].read()
+        tau_cmd = self._i.tau_cmd.read()
         if np.any(tau_cmd) == None:
             tau_cmd = np.zeros((3,))
 
@@ -48,8 +52,16 @@ class NodeRWASimple(NodeDifferential):
 
         self._t = sim_time
 
-        self._ports["rwa_mtm"].shift_out(self._x)
-        self._ports["rwa_tau"].shift_out(tau_cmd)
+        self._o.rwa_mtm.shift_out(self._x)
+        self._o.rwa_tau.shift_out(tau_cmd)
+
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
 
     def _dynamics(self, tau_cmd: np.ndarray):
         return -tau_cmd

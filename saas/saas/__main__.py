@@ -275,133 +275,132 @@ x Occlusion
 - auto FP node
 """
 
-node_thermal["out_sc_mass"] = node_orbit["input_mass"]
-node_thermal["out_sc_inertia_moment"] = node_control["input_sc_inertia_moment"]
-node_thermal["out_sc_inertia_moment"] = node_rb["input_inertia_moment"]
+node_thermal.o.out_sc_mass >> node_orbit.i.input_mass
+node_thermal.o.out_sc_inertia_moment >> node_control.i.input_sc_inertia_moment
+node_thermal.o.out_sc_inertia_moment >> node_rb.i.input_inertia_moment
 
-node_orbit["output_a_ff_eci"] = node_imu["true_a"]
-node_rb["output_w_sc"] = node_imu["true_w"]
-node_rb["output_q_sc_to_eci"] = node_imu["q_sc2eci"]
+node_orbit.o.output_a_ff_eci >> node_imu.i.input_true_acceleration
+node_rb.o.output_w_sc >> node_imu.i.input_true_angular_rate
+node_rb.o.output_q_sc_to_eci >> node_imu.i.input_q_sc2eci
 
-node_rb["output_q_sc_to_eci"] = node_sru["input_q_sc2eci"]
+node_rb.o.output_q_sc_to_eci >> node_sru.i.input_q_sc2eci
 
 # pointing solutions
-node_orbit["output_r_eci"] = node_nadir_pointing["input_r_eci"]
-node_orbit["output_v_eci"] = node_nadir_pointing["input_v_eci"]
-# node_fs['output_fs_state'] = node_nadir_pointing["input_fs_state"]
+node_orbit.o.output_r_eci >> node_nadir_pointing.i.input_pos_eci
+node_orbit.o.output_v_eci >> node_nadir_pointing.i.input_v_eci
+# node_fs.o.fs_state >> node_nadir_pointing.i.input_fs_state
 
-node_sun["out_sun_unit_icrs"] = node_com_pointing["in_sun_n"]
-node_earth["out_earth_unit_icrs"] = node_com_pointing["in_earth_n"]
-# node_fs['output_fs_state'] = node_com_pointing["input_fs_state"]
+node_sun.o.out_sun_unit_icrs >> node_com_pointing.i.in_sun_normal
+node_earth.o.out_earth_unit_icrs >> node_com_pointing.i.in_earth_normal
+# node_fs.o.fs_state >> node_com_pointing.i.input_fs_state
 
-node_sun["out_sun_unit_icrs"] = node_ss_pointing["in_sun_n"]
-node_earth["out_earth_unit_icrs"] = node_ss_pointing["in_earth_n"]
-# node_fs['output_fs_state'] = node_ss_pointing["input_fs_state"]
+node_sun.o.out_sun_unit_icrs >> node_ss_pointing.i.in_sun_normal
+node_earth.o.out_earth_unit_icrs >> node_ss_pointing.i.in_earth_normal
+# node_fs.o.fs_state >> node_ss_pointing.i.input_fs_state
 
-node_sun["out_sun_unit_icrs"] = node_cool_pointing["in_sun_n"]
-# node_fs['output_fs_state'] = node_cool_pointing["input_fs_state"]
+node_sun.o.out_sun_unit_icrs >> node_cool_pointing.i.in_sun_normal
+# node_fs.o.fs_state >> node_cool_pointing.i.input_fs_state
 
+node_fs.o.out_q_cmd >> node_control.i.input_q_cmd
+node_sru.o.output_q_sc2eci_measure >> node_control.i.input_q
+node_fs.o.out_w_cmd >> node_control.i.input_w_cmd
 
-node_fs["out_q_cmd"] = node_control["input_q_cmd"]
-node_sru["output_q_sc2eci_measure"] = node_control["input_q"]
-node_fs["out_w_cmd"] = node_control["input_w_cmd"]
+node_imu.o.output_measure_angular_rate >> node_control.i.input_w
+node_rb.o.output_w_sc >> node_control.i.input_w
+node_rwa.o.rwa_mtm >> node_control.i.input_mtm_int
 
-node_imu["measure_w"] = node_control["input_w"]
-node_rb["output_w_sc"] = node_control["input_w"]
-node_rwa["rwa_mtm"] = node_control["input_mtm_int"]
+node_control.o.output_tau_cmd >> node_rwa.i.tau_cmd
 
-node_control["output_tau_cmd"] = node_rwa["tau_cmd"]
+node_rwa.o.rwa_mtm >> node_rb.i.input_mtm_internal_sc
+node_rwa.o.rwa_tau >> node_rb.i.input_tau_external_sc
 
-node_rwa["rwa_mtm"] = node_rb["input_mtm_internal_sc"]
-node_rwa["rwa_tau"] = node_rb["input_tau_external_sc"]
+node_x_unit.o.constant_out >> node_boresight.i.in_vec
+node_sru.o.output_q_sc2eci_measure >> node_boresight.i.in_quat
 
-node_x_unit["output"] = node_boresight["in_vec"]
-node_sru["output_q_sc2eci_measure"] = node_boresight["in_quat"]
+node_orbit.o.output_r_eci >> node_earth.i.in_sc_pos_icrs
+node_orbit.o.output_r_eci >> node_sun.i.in_sc_pos_icrs
+node_orbit.o.output_r_eci >> node_occlusion.i.in_sc_pos_icrs
+node_orbit.o.output_r_eci >> node_earth_occlusion.i.in_sc_pos_icrs
 
-node_orbit["output_r_eci"] = node_earth["in_sc_pos_icrs"]
-node_orbit["output_r_eci"] = node_sun["in_sc_pos_icrs"]
-node_orbit["output_r_eci"] = node_occlusion["in_sc_pos_icrs"]
-node_orbit["output_r_eci"] = node_earth_occlusion["in_sc_pos_icrs"]
-
-node_start_datetime["out_datetime"] = node_earth["in_start_datetime"]
-node_start_datetime["out_datetime"] = node_sun["in_start_datetime"]
-node_start_datetime["out_datetime"] = node_occlusion["in_start_datetime"]
-node_start_datetime["out_datetime"] = node_earth_occlusion["in_start_datetime"]
+node_start_datetime.o.out_datetime >> node_earth.i.in_start_datetime
+node_start_datetime.o.out_datetime >> node_sun.i.in_start_datetime
+node_start_datetime.o.out_datetime >> node_occlusion.i.in_start_datetime
+node_start_datetime.o.out_datetime >> node_earth_occlusion.i.in_start_datetime
 
 # solar panel
-node_sun["out_solar_constant"] = node_solar_panel["in_solar_constant"]
-node_sun["out_sun_unit_icrs"] = node_solar_panel["in_sun_unit_sc"]
-node_fs["out_solar_gimbal"] = node_solar_panel["in_sp_gimbal_angle"]
-node_occlusion["out_is_occluded"] = node_solar_panel["in_is_occluded"]
-node_rb["output_q_sc_to_eci"] = node_solar_panel["input_q_sc2eci"]
+node_sun.o.out_solar_constant >> node_solar_panel.i.in_solar_constant
+node_sun.o.out_sun_unit_icrs >> node_solar_panel.i.in_sun_unit_sc
+node_fs.o.out_solar_gimbal_cmd >> node_solar_panel.i.in_sp_gimbal_angle
+node_occlusion.o.out_is_occluded >> node_solar_panel.i.in_is_occluded
+node_rb.o.output_q_sc_to_eci >> node_solar_panel.i.input_q_sc2eci
 
 # thermals
-node_sun["out_solar_constant"] = node_thermal["in_solar_constant"]
-node_sun["out_sun_unit_icrs"] = node_thermal["in_sun_unit"]
-node_rb["output_q_sc_to_eci"] = node_thermal["in_q_sc2eci"]
+node_sun.o.out_solar_constant >> node_thermal.i.in_solar_constant
+node_sun.o.out_sun_unit_icrs >> node_thermal.i.in_sun_unit
+node_rb.o.output_q_sc_to_eci >> node_thermal.i.in_q_sc2eci
 
 # battery
-node_solar_panel["out_power"] = node_batt["in_current"]
-node_batt_draw["output"] = node_batt["in_current_draw"]
+node_solar_panel.o.out_power >> node_batt.i.in_current
+node_batt_draw.o.constant_out >> node_batt.i.in_current_draw
 
 # flight software
-node_control["output_q_err"] = node_fs["in_point_err"]
-node_nadir_pointing["output_q_cmd"] = node_fs["in_q_cmd_nadir"]
-node_ss_pointing["output_q_cmd"] = node_fs["in_q_cmd_ss"]
-node_com_pointing["output_q_cmd"] = node_fs["in_q_cmd_com"]
-node_cool_pointing["output_q_cmd"] = node_fs["in_q_cmd_cool"]
-node_nadir_pointing["output_w_cmd"] = node_fs["in_w_cmd_nadir"]
-node_ss_pointing["output_w_cmd"] = node_fs["in_w_cmd_ss"]
-node_com_pointing["output_w_cmd"] = node_fs["in_w_cmd_com"]
-node_cool_pointing["output_w_cmd"] = node_fs["in_w_cmd_cool"]
-node_nadir_pointing["output_gimbal_cmd"] = node_fs["in_gimbal_cmd_nadir"]
-node_ss_pointing["output_sp_gimbal"] = node_fs["in_gimbal_cmd_ss"]
-node_com_pointing["output_sp_gimbal"] = node_fs["in_gimbal_cmd_com"]
-node_cool_pointing["output_sp_gimbal"] = node_fs["in_gimbal_cmd_cool"]
-node_thermal["out_sc_temp"] = node_fs["in_sc_temp"]
-node_batt["out_soc"] = node_fs["in_sc_soc"]
-node_earth_occlusion["out_is_occluded"] = node_fs["in_is_occluded_earth"]
-node_occlusion["out_is_occluded"] = node_fs["in_is_occluded_sun"]
+node_control.o.output_q_err >> node_fs.i.in_point_err
+node_nadir_pointing.o.output_q_cmd >> node_fs.i.in_q_cmd_nadir
+node_ss_pointing.o.output_q_cmd >> node_fs.i.in_q_cmd_ss
+node_com_pointing.o.output_q_cmd >> node_fs.i.in_q_cmd_com
+node_cool_pointing.o.output_q_cmd >> node_fs.i.in_q_cmd_cool
+node_nadir_pointing.o.output_w_cmd >> node_fs.i.in_w_cmd_nadir
+node_ss_pointing.o.output_w_cmd >> node_fs.i.in_w_cmd_ss
+node_com_pointing.o.output_w_cmd >> node_fs.i.in_w_cmd_com
+node_cool_pointing.o.output_w_cmd >> node_fs.i.in_w_cmd_cool
+node_nadir_pointing.o.output_gimbal_cmd >> node_fs.i.in_w_gimbal_nadir
+node_ss_pointing.o.output_sp_gimbal >> node_fs.i.in_w_gimbal_ss
+node_com_pointing.o.output_sp_gimbal >> node_fs.i.in_w_gimbal_com
+node_cool_pointing.o.output_sp_gimbal >> node_fs.i.in_w_gimbal_cool
+node_thermal.o.out_sc_temp >> node_fs.i.in_sc_temp
+node_batt.o.out_soc >> node_fs.i.in_sc_soc
+node_earth_occlusion.o.out_is_occluded >> node_fs.i.in_is_occluded_earth
+node_occlusion.o.out_is_occluded >> node_fs.i.in_is_occluded_sun
 
-node_fs["out_solar_gimbal"] = node_fault_mgs["in_gimbal_cmd"]
-node_solar_panel["out_gimbal_measure"] = node_fault_mgs["in_gimbal_measure"]
+node_fs.o.out_solar_gimbal_cmd >> node_fault_mgs.i.in_gimbal_cmd
+node_solar_panel.o.out_gimbal_measure >> node_fault_mgs.i.in_gimbal_measure
 
-node_fault_mgs["out_gimbal_fault"] = node_fs["in_is_fault"]
+node_fault_mgs.o.out_gimbal_fault >> node_fs.i.in_is_fault
 
 # metrics and viz...
-node_orbit["output_r_eci"] = node_orbit_scope["input_r_eci"]
-node_orbit["output_v_eci"] = node_orbit_scope["input_v_eci"]
-node_sun["out_sun_pos_icrs"] = node_orbit_scope["input_sc_sun_icrs"]
-node_earth["out_earth_pos_icrs"] = node_orbit_scope["input_sc_earth_icrs"]
-node_earth_occlusion["out_is_occluded"] = node_orbit_scope["input_earth_occ"]
-node_occlusion["out_is_occluded"] = node_orbit_scope["input_sun_occ"]
-node_start_datetime["out_datetime"] = node_orbit_scope["in_start_datetime"]
+node_orbit.o.output_r_eci >> node_orbit_scope.i.input_r_eci
+node_orbit.o.output_v_eci >> node_orbit_scope.i.input_v_eci
+node_sun.o.out_sun_pos_icrs >> node_orbit_scope.i.input_sc_sun_icrs
+node_earth.o.out_earth_pos_icrs >> node_orbit_scope.i.input_sc_earth_icrs
+node_earth_occlusion.o.out_is_occluded >> node_orbit_scope.i.input_earth_occ
+node_occlusion.o.out_is_occluded >> node_orbit_scope.i.input_sun_occ
+node_start_datetime.o.out_datetime >> node_orbit_scope.i.in_start_datetime
 
-node_rb["output_q_sc_to_eci"] = node_att_scope["input_q_sc_to_eci"]
-node_rb["output_w_sc"] = node_att_scope["input_w_sc"]
-node_nadir_pointing["output_nadir"] = node_att_scope["input_nadir"]
-node_solar_panel["out_gimbal"] = node_att_scope["input_gimbal"]
-node_sun["out_sun_unit_icrs"] = node_att_scope["input_sun_unit"]
-node_earth["out_earth_unit_icrs"] = node_att_scope["input_earth_unit"]
-node_fs["out_fs_state"] = node_att_scope["input_fs_state"]
-node_earth_occlusion["out_is_occluded"] = node_att_scope["input_earth_occ"]
-node_occlusion["out_is_occluded"] = node_att_scope["input_sun_occ"]
-node_start_datetime["out_datetime"] = node_att_scope["in_start_datetime"]
+node_rb.o.output_q_sc_to_eci >> node_att_scope.i.input_q_sc_to_eci
+node_rb.o.output_w_sc >> node_att_scope.i.input_w_sc
+node_nadir_pointing.o.output_nadir >> node_att_scope.i.input_nadir
+node_solar_panel.o.out_gimbal >> node_att_scope.i.input_gimbal
+node_sun.o.out_sun_unit_icrs >> node_att_scope.i.input_sun_unit
+node_earth.o.out_earth_unit_icrs >> node_att_scope.i.input_earth_unit
+node_fs.o.out_state >> node_att_scope.i.input_fs_state
+node_earth_occlusion.o.out_is_occluded >> node_att_scope.i.input_earth_occ
+node_occlusion.o.out_is_occluded >> node_att_scope.i.input_sun_occ
+node_start_datetime.o.out_datetime >> node_att_scope.i.in_start_datetime
 
-node_nadir_pointing["output_nadir"] = node_metric_pointing["input_cmd_vec"]
-node_boresight["out_vec"] = node_metric_pointing["input_meas_vec"]
-node_start_datetime["out_datetime"] = node_metric_pointing["in_start_datetime"]
+node_nadir_pointing.o.output_nadir >> node_metric_pointing.i.in_cmd_vec
+node_boresight.o.out_vec >> node_metric_pointing.i.in_meas_vec
+node_start_datetime.o.out_datetime >> node_metric_pointing.i.in_start_datetime
 
-node_batt["out_soc"] = node_metric_soc_temp["in_soc"]
-node_thermal["out_sc_temp"] = node_metric_soc_temp["in_temp"]
-node_start_datetime["out_datetime"] = node_metric_soc_temp["in_start_datetime"]
+node_batt.o.out_soc >> node_metric_soc_temp.i.in_soc
+node_thermal.o.out_sc_temp >> node_metric_soc_temp.i.in_temp
+node_start_datetime.o.out_datetime >> node_metric_soc_temp.i.in_start_datetime
 
-node_control["output_q_err"] = node_viz_att_cntrl_error["in_q_e"]
-node_control["output_w_err"] = node_viz_att_cntrl_error["in_w_e"]
+node_control.o.output_q_err >> node_viz_att_cntrl_error.i.in_q_e
+node_control.o.output_w_err >> node_viz_att_cntrl_error.i.in_w_e
 
-node_fs["out_science"] = node_metric_science["in_science"]
-node_fs["out_science_downlinked"] = node_metric_science["in_science_dl"]
-node_start_datetime["out_datetime"] = node_metric_science["in_start_datetime"]
+node_fs.o.out_science >> node_metric_science.i.in_sci
+node_fs.o.out_science_dl >> node_metric_science.i.in_sci_dl
+node_start_datetime.o.out_datetime >> node_metric_science.i.in_start_datetime
 
 if args.fault_config is not None:
     system.add_faults(args.fault_config)

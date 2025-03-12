@@ -11,7 +11,15 @@ from poliastro.frames.enums import Planes
 from saas.utility.body import get_poliastro_body
 
 from syssim.core import Node, InputPort, OutputPort
+from typing import NamedTuple
 
+
+class NodeSunOcclusionInputs(NamedTuple):
+    in_sc_pos_icrs: InputPort
+    in_start_datetime: InputPort
+
+class NodeSunOcclusionOutputs(NamedTuple):
+    out_is_occluded: OutputPort
 
 class NodeSunOcclusion(Node):
     def __init__(self, **kwargs):
@@ -24,26 +32,23 @@ class NodeSunOcclusion(Node):
         Configs:
             central_body_name (str): name of the central body for the simulation (e.g., "mars")
         """
-        in_sc_pos_icrs = InputPort("in_sc_pos_icrs", self)
-        in_start_datetime = InputPort("in_start_datetime", self)
+        self._i = NodeSunOcclusionInputs(
+            InputPort("in_sc_pos_icrs", self),
+            InputPort("in_start_datetime", self)
+        )
+        self._o = NodeSunOcclusionOutputs(
+            OutputPort("out_is_occluded", self)
+        )
 
-        out_is_occluded = OutputPort("out_is_occluded", self)
-
-        ports = {
-            in_sc_pos_icrs.name: in_sc_pos_icrs,
-            in_start_datetime.name: in_start_datetime,
-            out_is_occluded.name: out_is_occluded,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, self._o, **kwargs)
 
     def initialize(self):
         self._central_body = get_poliastro_body(self._config["central_body_name"])
         self._central_body_ICRS = _FRAME_MAPPING[self._central_body][Planes.BODY_FIXED]
 
     def update(self, sim_time: float):
-        self._t0 = Time(self._ports["in_start_datetime"].read())
-        sc_pos_cb = CartesianRepresentation(self._ports["in_sc_pos_icrs"].read() * u.m)
+        self._t0 = Time(self._i.in_start_datetime.read())
+        sc_pos_cb = CartesianRepresentation(self._i.in_sc_pos_icrs.read() * u.m)
 
         t = self._t0 + (sim_time * u.s)
         sun_pos_ICRS = get_body_barycentric("sun", t)
@@ -63,10 +68,24 @@ class NodeSunOcclusion(Node):
             self._central_body.R.si.value / sc_pos_cb.norm().si.value
         )
 
-        self._ports["out_is_occluded"].shift_out(
+        self._o.out_is_occluded.shift_out(
             sun_sep_angle < apparent_size_of_planet
         )
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
 
+
+class NodeEarthOcclusionInputs(NamedTuple):
+    in_sc_pos_icrs: InputPort
+    in_start_datetime: InputPort
+
+class NodeEarthOcclusionOutputs(NamedTuple):
+    out_is_occluded: OutputPort
 
 class NodeEarthOcclusion(Node):
     def __init__(self, **kwargs):
@@ -80,26 +99,23 @@ class NodeEarthOcclusion(Node):
             central_body_name (str): name of the central body for the simulation (e.g., "mars")
         """
 
-        in_sc_pos_icrs = InputPort("in_sc_pos_icrs", self)
-        in_start_datetime = InputPort("in_start_datetime", self)
+        self._i = NodeEarthOcclusionInputs(
+            InputPort("in_sc_pos_icrs", self),
+            InputPort("in_start_datetime", self)
+        )
+        self._o = NodeEarthOcclusionOutputs(
+            OutputPort("out_is_occluded", self)
+        )
 
-        out_is_occluded = OutputPort("out_is_occluded", self)
-
-        ports = {
-            in_sc_pos_icrs.name: in_sc_pos_icrs,
-            in_start_datetime.name: in_start_datetime,
-            out_is_occluded.name: out_is_occluded,
-        }
-
-        super().__init__(ports, **kwargs)
+        super().__init__(self._i, self._o, **kwargs)
 
     def initialize(self):
         self._central_body = get_poliastro_body(self._config["central_body_name"])
         self._central_body_ICRS = _FRAME_MAPPING[self._central_body][Planes.BODY_FIXED]
 
     def update(self, sim_time: float):
-        self._t0 = Time(self._ports["in_start_datetime"].read())
-        sc_pos_cb = CartesianRepresentation(self._ports["in_sc_pos_icrs"].read() * u.m)
+        self._t0 = Time(self._i.in_start_datetime.read())
+        sc_pos_cb = CartesianRepresentation(self._i.in_sc_pos_icrs.read() * u.m)
 
         t = self._t0 + (sim_time * u.s)
         earth_pos_ICRS = get_body_barycentric("earth", t)
@@ -118,6 +134,13 @@ class NodeEarthOcclusion(Node):
             self._central_body.R.si.value / sc_pos_cb.norm().si.value
         )
 
-        self._ports["out_is_occluded"].shift_out(
+        self._o.out_is_occluded.shift_out(
             earth_sep_angle < apparent_size_of_planet
         )
+    @property
+    def i(self):
+        return self._i
+    
+    @property
+    def o(self):
+        return self._o
