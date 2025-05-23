@@ -1,0 +1,8 @@
+[[node_imu.measure_w]]
+name = "gyro measure zero"
+start-time.t = 10
+duration.dt = 1000000
+occurance.p = 1.0
+action.type = "hold"
+action.value = 0.0
+action.index = [0, 1, 2]

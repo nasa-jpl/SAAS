@@ -1,0 +1,17 @@
+[project]
+name = "acs-syssim"
+description = "A very simple simulation of a spacecraft attitude control system using syssim. Outputs for csv log for MONSID consumption."
+version = "0.0.0"
+authors = [
+    { name = "Josef Biberstein", email = "josef.business@protonmail.com" }
+]
+dependencies = [
+    "matplotlib",
+    "scipy",
+    "rustworkx",
+    "toml",
+    "syssim",
+]
+
+[project.scripts]
+sim-acs = "acs_syssim.__main__:main"

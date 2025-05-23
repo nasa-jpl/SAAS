@@ -1,0 +1,22 @@
+[NodeSCRigidBodyRotationDynamics-1]
+[node_imu]
+w_noise = 0.001
+a_noise = 0.001
+w_bias = 0.0
+a_bias = 0.0
+[rwa]
+rwa_inertia = [0.25e-1, 0.25e-1, 0.25e-1]
+[NodeRateControlSimple-1]
+pointing_kp = 1e-1
+[viz_true_rate]
+title = "True Rate"
+xlabel = "Time (s)"
+ylabel = "Rate (rad/s)"
+[viz_imu_rate]
+title = "IMU Rate"
+xlabel = "Time (s)"
+ylabel = "Rate (rad/s)"
+[viz_torque]
+title = "Torque"
+xlabel = "Time (s)"
+ylabel = "Torque (Nm)"
