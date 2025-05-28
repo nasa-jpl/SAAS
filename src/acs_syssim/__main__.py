@@ -74,7 +74,7 @@ system = NodeSystem()
 node_rb = NodeSCRigidBodyRotationDynamics(x0_rb, config=args.node_config)
 node_imu = NodeIMUSimple(config=args.node_config, name="node_imu")
 node_imu.frequency = 100
-node_sru = NodeStellarReferenceUnitSimple()
+node_sru = NodeStellarReferenceUnitSimple(config=args.node_config, name="node_sru")
 node_sru.frequency = 10
 node_rwa = NodeRWASimple(np.zeros((3,)), config=args.node_config, name="rwa")
 node_rwa.frequency = 60.0
@@ -92,6 +92,7 @@ node_monsid_logger = NodeMONSIDCSVLogger(config=args.node_config, name="monsid_l
 
 system.add_node(node_rb)
 system.add_node(node_imu)
+system.add_node(node_sru)
 system.add_node(node_rwa)
 system.add_node(node_control)
 system.add_node(node_rate_cmd)
