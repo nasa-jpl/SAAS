@@ -15,13 +15,11 @@ from acs_syssim.models.imu import NodeIMUSimple
 from acs_syssim.models.rwa import NodeRWASimple
 from acs_syssim.models.sixdofsc import NodeSCRigidBodyRotationDynamics
 from acs_syssim.models.monsid_sensors import NodeMONSIDCSVLogger
-
+from acs_syssim.models.sru import NodeStellarReferenceUnitSimple
 
 
 def rigid_body_x0(w_low, w_high):
-    # qx, qy, qz, qw = Rotation.from_euler("x", 0, degrees=True).as_quat()
     qx, qy, qz, qw = Rotation.random().as_quat(canonical=True)
-    # qx, qy, qz, qw = Rotation.identity().as_quat(canonical=True)
 
     q0 = np.array([qw, qx, qy, qz])
 
@@ -35,9 +33,6 @@ def rigid_body_x0(w_low, w_high):
             w * np.cos(theta),
         ]
     )
-    # w_sc = np.array([w, 0, 0])
-    # w_sc = np.array([0, 0, 0])
-
     return np.concatenate([q0, w_sc])
 
 
@@ -79,6 +74,8 @@ system = NodeSystem()
 node_rb = NodeSCRigidBodyRotationDynamics(x0_rb, config=args.node_config)
 node_imu = NodeIMUSimple(config=args.node_config, name="node_imu")
 node_imu.frequency = 100
+node_sru = NodeStellarReferenceUnitSimple()
+node_sru.frequency = 10
 node_rwa = NodeRWASimple(np.zeros((3,)), config=args.node_config, name="rwa")
 node_rwa.frequency = 60.0
 node_control = NodeRateControlSimple(config=args.node_config)
@@ -106,6 +103,7 @@ system.add_node(node_monsid_logger)
 
 node_rb.o.output_w_sc >> node_imu.i.input_true_angular_rate
 node_rb.o.output_w_sc >> node_viz_true_rate.i.scope
+node_rb.o.output_q_sc_to_eci >> node_sru.i.input_q_sc2eci
 
 node_imu.o.output_measure_angular_rate >> node_control.i.input_w
 node_imu.o.output_measure_angular_rate >> node_viz_imu_rate.i.scope
@@ -124,6 +122,7 @@ node_inertia.o.constant_out >> node_rb.i.input_inertia_moment
 node_monsid_logger.i.cmd_torque << node_rwa.o.rwa_tau
 node_monsid_logger.i.sens_rate << node_rb.o.output_w_sc
 node_monsid_logger.i.sens_imu_rate << node_imu.o.output_measure_angular_rate
+node_monsid_logger.i.sens_q_sc_to_eci << node_sru.o.output_q_sc2eci_measure
 
 if args.fault_config is not None:
     system.add_faults(args.fault_config)

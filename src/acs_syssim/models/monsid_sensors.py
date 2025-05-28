@@ -6,18 +6,24 @@ class NodeCSVLoggerInputs(NamedTuple):
     cmd_torque: InputPort
     sens_rate: InputPort
     sens_imu_rate: InputPort
+    sens_q_sc_to_eci: InputPort
 
 class NodeMONSIDCSVLogger(Node):
     def __init__(self, **kwargs):
         self._i = NodeCSVLoggerInputs(
             InputPort("TauCmd", self),
             InputPort("TrueRate", self),
+            InputPort("MeasQuat", self),
             InputPort("MeasRate", self)
         )
 
         self._header = ["time"]
         for ip in self._i:
-            self._header += [f"{ip.name}_{n+1}" for n in range(3)]
+            if ip.name == "MeasQuat":
+                # For the quaternion, we will have 4 components
+                self._header += [f"{ip.name}_{n+1}" for n in range(4)]
+            else:
+                self._header += [f"{ip.name}_{n+1}" for n in range(3)]
 
         super().__init__(self._i, None, **kwargs)
 
@@ -41,7 +47,12 @@ class NodeMONSIDCSVLogger(Node):
         # Read the inputs
         row = [sim_time]
         for ip in self._i:
-            row += [f"{ip.read()[i]:.4f}" for i in range(3)]
+            if ip.name == "MeasQuat":
+                # For the quaternion, we will have 4 components
+                row += [f"{ip.read()[i]:.4f}" for i in range(4)]
+            else:
+                # For the other inputs, we will have 3 components
+                row += [f"{ip.read()[i]:.4f}" for i in range(3)]
 
         # Write to the CSV file
         self._writer.writerow(row)

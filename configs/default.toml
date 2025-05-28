@@ -4,6 +4,9 @@ w_noise = 0.001
 a_noise = 0.001
 w_bias = 0.0
 a_bias = 0.0
+[node_sru]
+sru_cross_noise = 0.01
+sru_roll_noise = 0.01
 [rwa]
 rwa_inertia = [0.25e-1, 0.25e-1, 0.25e-1]
 [NodeRateControlSimple-1]
