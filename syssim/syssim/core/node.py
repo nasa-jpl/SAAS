@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 import toml
 from numpy import array
 
-from syssim.core.port import InputPort
+from syssim.core.port import InputPort, OutputPort
 
 
 class Node(ABC):
@@ -57,25 +57,20 @@ class Node(ABC):
 
         self._system: "NodeSystem" = None
 
-    # def __getitem__(self, key: str) -> Union[InputPort, OutputPort]:
-    #     """Get a port from this node by name.
+    def __getitem__(self, key: str) -> Union[InputPort, OutputPort]:
+        """Get a port from this node by name.
 
-    #     Args:
-    #         key (str): Name of the port
+        Args:
+            key (str): Name of the port
 
-    #     Returns:
-    #         Union[InputPort, OutputPort]: Port with the given name
-    #     """
-    #     return self._ports[key]
-
-    # def __setitem__(self, key: str, port: InputPort):
-    #     """Connect an input port to an output port in this node
-
-    #     Args:
-    #         key (str): name of the output port
-    #         port (InputPort): the input port to connect to the named output port
-    #     """
-    #     self._ports[key].connect_input(port)
+        Returns:
+            Union[InputPort, OutputPort]: Port with the given name
+        """
+        # Search the union of self._i and self._o for the port with this name
+        for p in self._i + self._o: 
+            if p.name == key:
+                return p
+        raise KeyError(f"Port {key} not found in node {self._name}")
 
     def initialize(self):
         """Method stub for initializing the node at the start of a simulation. All initialization actions should be done here when subclassing the node. This ensures that the node will be properlly reset in simulations that run multiple batches."""
