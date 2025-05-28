@@ -33,8 +33,8 @@ class NodeScope(Node):
         self._title = self._config["title"]
         self._xlabel = self._config["xlabel"]
         self._ylabel = self._config["ylabel"]
-        self._show = self._config["show"]
-        self._save = self._config["save"]
+        self._show = self._config.get("show", True)
+        self._save = self._config.get("save", False)
 
     def update(self, sim_time: float):
         self._t.append(sim_time)
