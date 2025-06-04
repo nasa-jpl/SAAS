@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.integrate import solve_ivp
 
 from syssim import NodeDifferential, InputPort, OutputPort
 from typing import NamedTuple
@@ -11,14 +10,16 @@ class NodeRWASimpleInputs(NamedTuple):
 
 
 class NodeRWASimpleOutputs(NamedTuple):
-    rwa_mtm: OutputPort
+    rw_mtm: OutputPort
     """Reaction wheel angular momentum vector"""
-    rwa_tau: OutputPort
-    """Output torque"""
+    rw_speed: OutputPort
+    """Output reaction wheel speed vector"""
+    rw_torque: OutputPort
+    """Output torque vector"""
 
 
 class NodeRWASimple(NodeDifferential):
-    def __init__(self, x0: np.array, **kwargs):
+    def __init__(self, x0: float = 0, **kwargs):
         """A model of a simple reaction wheel assembly. Keeps track of internal angular momentum vector and just passes through the comanded torque. No saturation or noise.
 
         Args:
@@ -33,13 +34,14 @@ class NodeRWASimple(NodeDifferential):
             rwa_inertia: diagonal of the reaction wheel assembly inertia moment. 3x1 [kg m^2]
         """
         self._i = NodeRWASimpleInputs(InputPort("tau_cmd", self))
-        self._o = NodeRWASimpleOutputs(OutputPort("rwa_mtm", self), OutputPort("rwa_tau", self))
+        self._o = NodeRWASimpleOutputs(OutputPort("rw_mtm", self), OutputPort("rw_speed", self), OutputPort("rw_torque", self))
 
         super().__init__(x0, self._i, self._o, **kwargs)
 
     def initialize(self):
-        self._inertia = np.diag(self._config["rwa_inertia"])
-        self._inertia_inv = np.linalg.inv(self._inertia)
+        self._inertia = float(self._config["rwa_inertia"])
+        self._body_unit_vector = np.array(self._config['body_vector'], dtype=float)
+        self._body_unit_vector /= np.linalg.norm(self._body_unit_vector)
         self._t = 0
 
     def update(self, sim_time: float):
@@ -48,12 +50,15 @@ class NodeRWASimple(NodeDifferential):
             tau_cmd = np.zeros((3,))
 
         dt = sim_time - self._t
-        self._x += self._dynamics(tau_cmd) * dt
+
+        delta_speed = -tau_cmd / self._inertia
+        self._x += delta_speed * (sim_time - self._t)
 
         self._t = sim_time
 
-        self._o.rwa_mtm.shift_out(self._x)
-        self._o.rwa_tau.shift_out(tau_cmd)
+        self._o.rw_mtm.shift_out(self._x * self._inertia * self._body_unit_vector)
+        self._o.rwa_tau.rw_torque(tau_cmd)
+        self._o.rw_speed.shift_out(self._x)
 
     @property
     def i(self):
@@ -62,6 +67,3 @@ class NodeRWASimple(NodeDifferential):
     @property
     def o(self):
         return self._o
-
-    def _dynamics(self, tau_cmd: np.ndarray):
-        return -tau_cmd
