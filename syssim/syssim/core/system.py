@@ -10,6 +10,7 @@ import toml
 
 from syssim.core.node import Node
 from syssim.fault import FaultBasic
+from syssim.core.fault import Fault
 
 
 class NodeSystem:
@@ -17,7 +18,7 @@ class NodeSystem:
         """Represents a system that can be simulated. The system is made up of nodes and the connections between their ports, which in turn dictate how data flows thorugh the simulation. Think MATLAB Simulink."""
         self._ex_plan: List[Node] = None
         self._nodes: List[Node] = list()
-        self._faults = dict()
+        self._faults : List[Fault] = list()
         self._detected_faults = list()
 
     def __repr__(self):
@@ -57,23 +58,22 @@ class NodeSystem:
         self._nodes.append(n)
         n._system = self
 
-    def add_faults(self, toml_spec: Union[str, PathLike]):
+    def add_faults(self, fault : Union[Fault, List[Fault]]):
         """Register a set of faults into the simulation. The nodes and ports to which the faults are assigned must already have been added to the system.
 
         Args:
-            toml_spec (Union[str, PathLike]): path to the TOML file specifying the faults
+            fault (Union[Fault, List[Fault]]): Fault or list of faults to register. The faults must already have been assigned to a node param or port.
         """
-        spec = toml.load(toml_spec)
-
-        for nn in spec:
-            node = self.get_node(nn)
-            for ports in spec[nn]:
-                for fault_spec in spec[nn][ports]:
-                    fault = FaultBasic(fault_spec, node, node[ports])
-                    if node in self._faults:
-                        self._faults[node].append(fault)
-                    else:
-                        self._faults[node] = [fault]
+        if isinstance(fault, Fault):
+            self._faults.append(fault)
+        else:
+            for f in fault:
+                if isinstance(f, Fault):
+                    self._faults.append(f)
+                else:
+                    raise Exception(
+                        "Faults must be of type Fault or a subclass of Fault."
+                    )
 
     def detect_fault(self, name: str, time: float):
         """Register a detection of a fault with the system. Used to allow plotting them later.
@@ -96,17 +96,17 @@ class NodeSystem:
         for n in self._nodes:
             if n.name == node_name:
                 return n
+    # NOTE Deprecated for now
+    # def get_faults(self, node: Node) -> List:
+    #     """Get all the fauts registered for a given node in the system
 
-    def get_faults(self, node: Node) -> List:
-        """Get all the fauts registered for a given node in the system
+    #     Args:
+    #         node (Node): the node
 
-        Args:
-            node (Node): the node
-
-        Returns:
-            List[Faults]: list of faults for this node
-        """
-        return self._faults[node]
+    #     Returns:
+    #         List[Faults]: list of faults for this node
+    #     """
+    #     return self._faults[node]
 
     def get_fault_detections(self) -> List[Tuple[str, float]]:
         """Get all the faults we think we have detected
@@ -122,10 +122,7 @@ class NodeSystem:
         Returns:
             List: list of faults
         """
-        faults = []
-        for f in self._faults.values():
-            faults += f
-        return faults
+        return self._faults
 
     def get_output_dir(self) -> str:
         """Get the directory in which we should store results for this simulation of this system
@@ -208,18 +205,16 @@ class NodeSystem:
         # Initialize all blocks
         for n in self._nodes:
             n.initialize()
-            if n in self._faults:
-                for f in self._faults[n]:
-                    f._gen_state()
+        for f in self._faults:
+            f.initialize()
 
         for st, ns in tqdm(
             self._schedule.items(), leave=False, position=1, desc=f"Sim --- {sim_name}"
         ):
             # print(f"Processing time step {st}...")
             # Update each fault
-            for n in self._faults:
-                for f in self._faults[n]:
-                    f.update(st)
+            for f in self._faults:
+                f.update(st)
 
             # Get all times and nodes to update at each time
             for n in self._ex_plan:

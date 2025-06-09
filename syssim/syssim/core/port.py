@@ -39,8 +39,8 @@ class InputPort:
         """
         cval = deepcopy(val)
         for f in self._faults:
-            if f.is_active():
-                f.action(cval)
+            if f.active:
+                cval = f.action(cval)
         self._v = cval
 
     @property
@@ -94,12 +94,13 @@ class OutputPort:
         Args:
             val (any): the value to shift out
         """
+        cval = deepcopy(val)
         for f in self._faults:
-            if f.is_active():
-                f.action(val)
+            if f.active:
+                cval = f.action(val)
 
         for p in self._input_ports:
-            p._write(val)
+            p._write(cval)
 
     def connect_input(self, input_port: InputPort):
         """Connect this output port to an input port. One output may be connected to many inputs.
