@@ -13,8 +13,8 @@ class NodeMONSIDCSVLogger(Node):
         self._i = NodeCSVLoggerInputs(
             InputPort("TauCmd", self),
             InputPort("TrueRate", self),
+            InputPort("MeasRate", self),
             InputPort("MeasQuat", self),
-            InputPort("MeasRate", self)
         )
 
         self._header = ["time"]
