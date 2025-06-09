@@ -9,6 +9,7 @@ import toml
 from syssim import NodeSystem
 from syssim.nodes.source import NodeConstant
 from syssim.nodes.viz import NodeScope
+from syssim.fault.disconect import ZeroFault
 
 from acs_syssim.models.controller import NodeRateControlSimple
 from acs_syssim.models.imu import NodeIMUSimple
@@ -16,7 +17,6 @@ from acs_syssim.models.rwa import NodeRWASimple
 from acs_syssim.models.sixdofsc import NodeSCRigidBodyRotationDynamics
 from acs_syssim.models.monsid_sensors import NodeMONSIDCSVLogger
 from acs_syssim.models.sru import NodeStellarReferenceUnitSimple
-
 
 def rigid_body_x0(w_low, w_high):
     qx, qy, qz, qw = Rotation.random().as_quat(canonical=True)
@@ -45,19 +45,13 @@ parser.add_argument(
     type=str,
     help="Path to the node configuration parameter specification",
 )
-parser.add_argument(
-    "-f",
-    "--fault-config",
-    type=str,
-    help="Path to the fault configuration parameter specification",
-    default=None,
-)
+
 parser.add_argument(
     "-d",
     "--sim-duration",
     type=float,
     help="Simulation duration in seconds",
-    default=60.0,
+    default=20.0,
     dest="sim_duration",
 )
 parser.add_argument("--dt", help="Default simulation timestep", type=float, default=1e-2)
@@ -74,7 +68,7 @@ system = NodeSystem()
 node_rb = NodeSCRigidBodyRotationDynamics(x0_rb, config=args.node_config)
 node_imu = NodeIMUSimple(config=args.node_config, name="node_imu")
 node_imu.frequency = 100
-node_sru = NodeStellarReferenceUnitSimple()
+node_sru = NodeStellarReferenceUnitSimple(config=args.node_config, name="node_sru")
 node_sru.frequency = 10
 node_rwa = NodeRWASimple(np.zeros((3,)), config=args.node_config, name="rwa")
 node_rwa.frequency = 60.0
@@ -90,8 +84,14 @@ node_viz_imu_rate.frequency = 100
 node_inertia = NodeConstant(np.diag([1.0, 1.0, 1.0]), config=args.node_config)
 node_monsid_logger = NodeMONSIDCSVLogger(config=args.node_config, name="monsid_logger")
 
+# Faults Declaration
+imu_zero = ZeroFault(
+    "imu_zero", trigger_time=10.0
+)
+
 system.add_node(node_rb)
 system.add_node(node_imu)
+system.add_node(node_sru)
 system.add_node(node_rwa)
 system.add_node(node_control)
 system.add_node(node_rate_cmd)
@@ -100,7 +100,9 @@ system.add_node(node_viz_torque)
 system.add_node(node_viz_imu_rate)
 system.add_node(node_inertia)
 system.add_node(node_monsid_logger)
+system.add_faults(imu_zero)
 
+# Node connections
 node_rb.o.output_w_sc >> node_imu.i.input_true_angular_rate
 node_rb.o.output_w_sc >> node_viz_true_rate.i.scope
 node_rb.o.output_q_sc_to_eci >> node_sru.i.input_q_sc2eci
@@ -124,8 +126,8 @@ node_monsid_logger.i.sens_rate << node_rb.o.output_w_sc
 node_monsid_logger.i.sens_imu_rate << node_imu.o.output_measure_angular_rate
 node_monsid_logger.i.sens_q_sc_to_eci << node_sru.o.output_q_sc2eci_measure
 
-if args.fault_config is not None:
-    system.add_faults(args.fault_config)
+# Port fault registration
+node_imu.o.output_measure_angular_rate.add_fault(imu_zero)
 
 print(system)
 
