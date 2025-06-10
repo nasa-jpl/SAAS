@@ -7,8 +7,14 @@ a_bias = 0.0
 [node_sru]
 sru_cross_noise = 0.01
 sru_roll_noise = 0.01
-[rwa]
-rwa_inertia = [0.25e-1, 0.25e-1, 0.25e-1]
+[rwa_1]
+rwa_inertia = 0.25e-1
+[rwa_2]
+rwa_inertia = 0.25e-1
+[rwa_3]
+rwa_inertia = 0.25e-1
+[rwa_4]
+rwa_inertia = 0.25e-1
 [NodeRateControlSimple-1]
 pointing_kp = 1e-1
 [viz_true_rate]

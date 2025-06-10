@@ -3,23 +3,29 @@ import numpy as np
 from syssim import NodeDifferential, InputPort, OutputPort
 from typing import NamedTuple
 
+from syssim.core.node import NodeParameter
+
 
 class NodeRWASimpleInputs(NamedTuple):
     tau_cmd: InputPort
-    """Commanded torque input"""
+    """Commanded torque input for this wheel (scalar)"""
 
 
 class NodeRWASimpleOutputs(NamedTuple):
     rw_mtm: OutputPort
-    """Reaction wheel angular momentum vector"""
+    """Reaction wheel angular momentum vector in body frame"""
     rw_speed: OutputPort
-    """Output reaction wheel speed vector"""
+    """Output reaction wheel speed vector in body frame"""
     rw_torque: OutputPort
-    """Output torque vector"""
+    """Output torque vector in body frame"""
 
 
 class NodeRWASimple(NodeDifferential):
-    def __init__(self, x0: float = 0, **kwargs):
+
+    class Parameters(NamedTuple):
+        body_axis: NodeParameter
+
+    def __init__(self, x0: float = 0, body_axis: list = [1.0, 0.0, 0.0], **kwargs):
         """A model of a simple reaction wheel assembly. Keeps track of internal angular momentum vector and just passes through the comanded torque. No saturation or noise.
 
         Args:
@@ -35,30 +41,31 @@ class NodeRWASimple(NodeDifferential):
         """
         self._i = NodeRWASimpleInputs(InputPort("tau_cmd", self))
         self._o = NodeRWASimpleOutputs(OutputPort("rw_mtm", self), OutputPort("rw_speed", self), OutputPort("rw_torque", self))
+        body_unit_vector = np.array(body_axis, dtype=float)
+        body_unit_vector /= np.linalg.norm(body_unit_vector)
+        self._p = self.Parameters(NodeParameter("body_vector", body_unit_vector))
 
-        super().__init__(x0, self._i, self._o, **kwargs)
+        super().__init__(x0, self._i, self._o, self._p, **kwargs)
 
     def initialize(self):
         self._inertia = float(self._config["rwa_inertia"])
-        self._body_unit_vector = np.array(self._config['body_vector'], dtype=float)
-        self._body_unit_vector /= np.linalg.norm(self._body_unit_vector)
         self._t = 0
 
     def update(self, sim_time: float):
         tau_cmd = self._i.tau_cmd.read()
         if np.any(tau_cmd) == None:
-            tau_cmd = np.zeros((3,))
+            tau_cmd = 0
 
         dt = sim_time - self._t
 
         delta_speed = -tau_cmd / self._inertia
-        self._x += delta_speed * (sim_time - self._t)
+        self._x += delta_speed * dt
 
         self._t = sim_time
 
-        self._o.rw_mtm.shift_out(self._x * self._inertia * self._body_unit_vector)
-        self._o.rwa_tau.rw_torque(tau_cmd)
-        self._o.rw_speed.shift_out(self._x)
+        self._o.rw_mtm.shift_out(self._x * self._inertia * self.p.body_axis.value)
+        self._o.rw_torque.shift_out(tau_cmd * self.p.body_axis.value)
+        self._o.rw_speed.shift_out(self._x * self.p.body_axis.value)
 
     @property
     def i(self):
@@ -67,3 +74,7 @@ class NodeRWASimple(NodeDifferential):
     @property
     def o(self):
         return self._o
+
+    @property
+    def p(self):
+        return self._p
