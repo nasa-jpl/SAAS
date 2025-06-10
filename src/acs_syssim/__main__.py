@@ -17,6 +17,7 @@ from acs_syssim.models.rwa import NodeRWASimple
 from acs_syssim.models.sixdofsc import NodeSCRigidBodyRotationDynamics
 from acs_syssim.models.monsid_sensors import NodeMONSIDCSVLogger
 from acs_syssim.models.sru import NodeStellarReferenceUnitSimple
+from acs_syssim.models.fault import DiagonalInertiaPerturbFault
 
 def rigid_body_x0(w_low, w_high):
     qx, qy, qz, qw = Rotation.random().as_quat(canonical=True)
@@ -51,7 +52,7 @@ parser.add_argument(
     "--sim-duration",
     type=float,
     help="Simulation duration in seconds",
-    default=20.0,
+    default=50.0,
     dest="sim_duration",
 )
 parser.add_argument("--dt", help="Default simulation timestep", type=float, default=1e-2)
@@ -81,13 +82,17 @@ node_viz_torque = NodeScope(config=args.node_config, name="viz_torque")
 node_viz_torque.frequency = 100
 node_viz_imu_rate = NodeScope(config=args.node_config, name="viz_imu_rate")
 node_viz_imu_rate.frequency = 100
-node_inertia = NodeConstant(np.diag([1.0, 1.0, 1.0]), config=args.node_config)
 node_monsid_logger = NodeMONSIDCSVLogger(config=args.node_config, name="monsid_logger")
 
 # Faults Declaration
 imu_zero = ZeroFault(
     "imu_zero", trigger_time=10.0
 )
+imu_zero.active = False
+inertia_fault = DiagonalInertiaPerturbFault(
+    "inertia_fault",
+)
+inertia_fault.active = True
 
 system.add_node(node_rb)
 system.add_node(node_imu)
@@ -98,9 +103,8 @@ system.add_node(node_rate_cmd)
 system.add_node(node_viz_true_rate)
 system.add_node(node_viz_torque)
 system.add_node(node_viz_imu_rate)
-system.add_node(node_inertia)
 system.add_node(node_monsid_logger)
-system.add_faults(imu_zero)
+system.add_faults([imu_zero, inertia_fault])
 
 # Node connections
 node_rb.o.output_w_sc >> node_imu.i.input_true_angular_rate
@@ -118,9 +122,6 @@ node_control.o.output_tau_cmd >> node_rwa.i.tau_cmd
 
 node_rate_cmd.o.constant_out >> node_control.i.input_w_cmd
 
-node_inertia.o.constant_out >> node_control.i.input_sc_inertia_moment
-node_inertia.o.constant_out >> node_rb.i.input_inertia_moment
-
 node_monsid_logger.i.cmd_torque << node_rwa.o.rwa_tau
 node_monsid_logger.i.sens_rate << node_rb.o.output_w_sc
 node_monsid_logger.i.sens_imu_rate << node_imu.o.output_measure_angular_rate
@@ -128,6 +129,9 @@ node_monsid_logger.i.sens_q_sc_to_eci << node_sru.o.output_q_sc2eci_measure
 
 # Port fault registration
 node_imu.o.output_measure_angular_rate.add_fault(imu_zero)
+
+# Param fault registration
+node_rb.p.inertia_moment.add_fault(inertia_fault)
 
 print(system)
 

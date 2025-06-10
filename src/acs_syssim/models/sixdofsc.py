@@ -3,6 +3,7 @@ from scipy.integrate import solve_ivp
 from scipy.spatial.transform import Rotation
 
 from syssim import NodeDifferential, InputPort, OutputPort
+from syssim.core.node import NodeParameter
 from typing import NamedTuple
 
 class NodeSCRigidBodyRotationDynamicsInputs(NamedTuple):
@@ -15,6 +16,12 @@ class NodeSCRigidBodyRotationDynamicsOutputs(NamedTuple):
     output_q_sc_to_eci: OutputPort
     output_w_sc: OutputPort
 
+class NodeSCRigidBodyRotationDynamicsParameters(NamedTuple):
+    inertia_moment: NodeParameter
+    """
+    inertia_moment: spacecraft inertia moment diagonal. 3x1 [kg m^2]
+    """
+    
 
 class NodeSCRigidBodyRotationDynamics(NodeDifferential):
     def __init__(self, x0: np.ndarray, **kwargs):
@@ -41,8 +48,10 @@ class NodeSCRigidBodyRotationDynamics(NodeDifferential):
 
         self._i = NodeSCRigidBodyRotationDynamicsInputs(input_mtm_internal_sc, input_tau_external_sc, input_inertia_moment)
         self._o = NodeSCRigidBodyRotationDynamicsOutputs(output_q_sc_to_eci, output_w_sc)
-
-        super().__init__(x0, self._i, self._o, **kwargs)
+        self._p = NodeSCRigidBodyRotationDynamicsParameters(
+            inertia_moment=NodeParameter("inertia_moment", np.diag([1.0, 1.0, 1.0]))
+        )
+        super().__init__(x0, self._i, self._o, self._p, **kwargs)
 
     def initialize(self):
         self._t = 0
@@ -50,7 +59,7 @@ class NodeSCRigidBodyRotationDynamics(NodeDifferential):
     def update(self, sim_time: float):
         tau_ext_sc = self._i.input_tau_external_sc.read()
         h_int_sc = self._i.input_mtm_internal_sc.read()
-        j = self._i.input_inertia_moment.read()
+        j = self._p.inertia_moment.value
 
         tau_ext_sc = np.zeros((3,)) if np.any(tau_ext_sc) == None else tau_ext_sc
         h_int_sc = np.zeros((3,)) if np.any(h_int_sc) == None else h_int_sc
@@ -114,3 +123,7 @@ class NodeSCRigidBodyRotationDynamics(NodeDifferential):
     @property
     def o(self):
         return self._o
+    
+    @property
+    def p(self):
+        return self._p

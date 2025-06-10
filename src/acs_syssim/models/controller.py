@@ -1,6 +1,7 @@
 import numpy as np
 
 from syssim import Node, InputPort, OutputPort
+from syssim.core.node import NodeParameter
 from typing import NamedTuple
 
 
@@ -14,6 +15,12 @@ class NodeRateControlSimpleInputs(NamedTuple):
 class NodeRateControlSimpleOutputs(NamedTuple):
     output_tau_cmd: OutputPort
     output_w_err: OutputPort
+
+class NodeSCRigidBodyRotationDynamicsParameters(NamedTuple):
+    inertia_moment: NodeParameter
+    """
+    inertia_moment: spacecraft inertia moment diagonal. 3x1 [kg m^2]
+    """
 
 
 class NodeRateControlSimple(Node):
@@ -48,7 +55,11 @@ class NodeRateControlSimple(Node):
             OutputPort("output_w_err", self)
         )
 
-        super().__init__(self._i, self._o, **kwargs)
+        self._p = NodeSCRigidBodyRotationDynamicsParameters(
+            inertia_moment=NodeParameter("inertia_moment", np.diag([1.0, 1.0, 1.0]))
+        )
+
+        super().__init__(self._i, self._o, self._p, **kwargs)
 
     def initialize(self):
         self._kp = self._config["pointing_kp"]
@@ -56,7 +67,7 @@ class NodeRateControlSimple(Node):
         self._t = 0
 
     def update(self, sim_time: float):
-        self._inertia = self._i.input_sc_inertia_moment.read()
+        self._inertia = self._p.inertia_moment.value
 
         w_cmd = self._i.input_w_cmd.read()
         if np.any(w_cmd) is None:
@@ -87,6 +98,10 @@ class NodeRateControlSimple(Node):
     @property
     def o(self):
         return self._o
+    
+    @property
+    def p(self):
+        return self._p
 
     def _skew(self, x: np.ndarray):
         return np.array([[0, -x[2], x[1]], [x[2], 0, -x[0]], [-x[1], x[0], 0]])
