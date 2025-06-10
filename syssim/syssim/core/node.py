@@ -1,11 +1,69 @@
-from typing import Union, Dict, List, Tuple, NamedTuple
+from typing import Any, Union, Dict, List, Tuple, NamedTuple
 from copy import deepcopy
 from abc import ABC, abstractmethod
 
 import toml
 from numpy import array
 
+from syssim.core.fault import Fault
 from syssim.core.port import InputPort, OutputPort
+
+
+class NodeParameter:
+    """Node parameters are used to store values for a node which represent nominally parametric values of the model which the node implements. However, these parameters may be faulted and thus may be overridden by the fault logic in a similar way to ports."""
+
+    def __init__(self, name: str, value: Any):
+        """Node parameters are used to store values for a node which represent nominally parametric values of the model which the node implements. However, these parameters may be faulted and thus may be overridden by the fault logic in a similar way to ports.
+
+        Args:
+            name (str): Name of the parameter
+            value (Any): Value of the parameter
+        """
+        self._name = name
+        self._value = value
+        self._faults: List[Fault] = []
+
+    def add_fault(self, fault):
+        """Add a fault to this parameter. The fault will be applied to the value of this parameter when it is accessed.
+
+        Args:
+            fault (Fault): Fault to add
+        """
+        self._faults.append(fault)
+
+    # getter and setters
+    @property
+    def value(self) -> Any:
+        """The value of this parameter, possibly modified by active faults.
+
+        Returns:
+            Any: value
+        """
+        cval = deepcopy(self._value)
+        for f in self._faults:
+            if f.active:
+                cval = f.action(cval)
+        return cval
+
+    @property
+    def name(self) -> str:
+        """The name of this parameter.
+
+        Returns:
+            str: name
+        """
+        return self._name
+
+    @name.setter
+    def name(self, name: str):
+        """Set the name of this parameter.
+
+        Args:
+            name (str): new name
+        """
+        if not isinstance(name, str):
+            raise TypeError("Parameter name must be a string")
+        self._name = name
 
 
 class Node(ABC):
@@ -15,6 +73,7 @@ class Node(ABC):
         self,
         input_ports: Union[NamedTuple, Tuple],
         output_ports: Union[NamedTuple, Tuple],
+        parameters: Union[NamedTuple, Tuple] = (),
         config: str = None,
         sample_frequency=None,
         sample_period=None,
@@ -32,6 +91,7 @@ class Node(ABC):
 
         self._i = input_ports
         self._o = output_ports
+        self._p = parameters
 
         if config != None:
             self._full_config = toml.load(config)
@@ -67,7 +127,7 @@ class Node(ABC):
             Union[InputPort, OutputPort]: Port with the given name
         """
         # Search the union of self._i and self._o for the port with this name
-        for p in self._i + self._o: 
+        for p in self._i + self._o:
             if p.name == key:
                 return p
         raise KeyError(f"Port {key} not found in node {self._name}")
@@ -103,18 +163,23 @@ class Node(ABC):
         return deps
 
     @property
-    @abstractmethod
     def i(self):
-        """Input ports for this Node.
-        """
-        pass
+        """Input ports for this Node."""
+        return ()
 
     @property
-    @abstractmethod
     def o(self):
-        """Output ports for this Node.
+        """Output ports for this Node."""
+        return ()
+
+    @property
+    def p(self):
+        """Parameters for this Node.
+
+        Returns:
+            Union[NamedTuple, Tuple]: parameters
         """
-        pass
+        return ()
 
     @property
     def period(self) -> float:
@@ -186,7 +251,12 @@ class NodeDifferential(Node):
     """A class representing any node that models a differential equation. These nodes are special in that they may have inputs, but are assumed to only depend on the input values from the simulation step before the one they are currently updating too. This means that they do not have dependencies for the purpose of solving for a node update order."""
 
     def __init__(
-        self, x0: array, input_ports: List[str], output_ports: List[str], **kwargs
+        self,
+        x0: array,
+        input_ports: List[str],
+        output_ports: List[str],
+        parameters: Union[NamedTuple, Tuple] = (),
+        **kwargs,
     ):
         """A class representing any node that models a differential equation. These nodes are special in that they may have inputs, but are assumed to only depend on the input values from the simulation step before the one they are currently updating too. This means that they do not have dependencies for the purpose of solving for a node update order.
 
@@ -197,7 +267,7 @@ class NodeDifferential(Node):
 
         self._x = x0
         self._x0 = x0
-        super().__init__(input_ports, output_ports, **kwargs)
+        super().__init__(input_ports, output_ports, parameters, **kwargs)
 
     def depends(self) -> List[Node]:
         # Differential blocks have no dependencies...
