@@ -26,10 +26,8 @@ class NodeWheelEncoder(Node):
 
     def update(self, sim_time: float):
         w_t = self._i.enc_in.read()
-        if np.any(w_t) == None:
-            w_t = 0
-        else:
-            w_t = np.linalg.norm(w_t)
+        if isinstance(w_t, np.ndarray):
+            w_t = w_t[0]
 
         w_m = self._w_sample(w_t)
 

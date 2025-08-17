@@ -2,33 +2,33 @@
 [estimator]
 inertia = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 [encoder_1]
-w_noise = 0.001
+w_noise = 0.0
 w_bias = 0.0
 [encoder_2]
-w_noise = 0.001
+w_noise = 0.0
 w_bias = 0.0
 [encoder_3]
-w_noise = 0.001
+w_noise = 0.0
 w_bias = 0.0
 [encoder_4]
-w_noise = 0.001
+w_noise = 0.0
 w_bias = 0.0
 [node_imu1]
-w_noise = 0.001
+w_noise = 0.0
 a_noise = 0.001
 w_bias = 0.0
 a_bias = 0.0
 [node_sru1]
-sru_cross_noise = 0.01
-sru_roll_noise = 0.01
+sru_cross_noise = 0.0
+sru_roll_noise = 0.0
 [node_imu2]
-w_noise = 0.001
+w_noise = 0.0
 a_noise = 0.001
 w_bias = 0.0
 a_bias = 0.0
 [node_sru2]
-sru_cross_noise = 0.01
-sru_roll_noise = 0.01
+sru_cross_noise = 0.0
+sru_roll_noise = 0.0
 [rwa_1]
 rwa_inertia = 0.25e-1
 [rwa_2]
@@ -38,8 +38,8 @@ rwa_inertia = 0.25e-1
 [rwa_4]
 rwa_inertia = 0.25e-1
 [NodePointingControlSimple-1]
-pointing_kp = 3.0
-pointing_kd = 2.0
+pointing_kp = 5.0
+pointing_kd = 3.5
 pointing_ki = 0.0 #1e-2
 i_mag_limit = 0.1
 i_enable_limit = 0.2
@@ -47,23 +47,34 @@ i_enable_limit = 0.2
 title = "True Rate"
 xlabel = "Time (s)"
 ylabel = "Rate (rad/s)"
+legend = ["x", "y", "z"]
 [viz_imu_rate]
 title = "IMU Rate"
 xlabel = "Time (s)"
 ylabel = "Rate (rad/s)"
+legend = ["x", "y", "z"]
 [viz_torque]
 title = "Torque"
 xlabel = "Time (s)"
 ylabel = "Torque (Nm)"
+legend = ["x", "y", "z"]
 [viz_pointing]
 title = "Pointing"
 xlabel = "Time (s)"
 ylabel = "quaternion"
+legend = ["q0", "q1", "q2", "q3"]
 [viz_est_rate]
 title = "Estimated Rate"
 xlabel = "Time (s)"
 ylabel = "Rate (rad/s)"
+legend = ["x", "y", "z"]
 [viz_est_pointing]
 title = "Estimated Pointing"
 xlabel = "Time (s)"
 ylabel = "quaternion"
+legend = ["q0", "q1", "q2", "q3"]
+[viz_monsid_diagnosis]
+title = "MONSID Diagnosis"
+xlabel = "Time (s)"
+ylabel = "Health Status"
+legend = ["RW1", "RW2", "RW3", "RW4"]

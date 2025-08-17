@@ -107,10 +107,10 @@ class ReactionWheelMixerNode(Node):
             method="highs",
         )
         if res.success:
-            self.o.wheel1_torque.shift_out(res.x[0])
-            self.o.wheel2_torque.shift_out(res.x[1])
-            self.o.wheel3_torque.shift_out(res.x[2])
-            self.o.wheel4_torque.shift_out(res.x[3])
+            self.o.wheel1_torque.shift_out(res.x[0] * self.p.axis1.value)
+            self.o.wheel2_torque.shift_out(res.x[1] * self.p.axis2.value)
+            self.o.wheel3_torque.shift_out(res.x[2] * self.p.axis3.value)
+            self.o.wheel4_torque.shift_out(res.x[3] * self.p.axis4.value)
         else:
             self.o.wheel1_torque.shift_out(0.0)
             self.o.wheel2_torque.shift_out(0.0)

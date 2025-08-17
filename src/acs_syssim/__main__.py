@@ -15,10 +15,10 @@ from acs_syssim.models.controller import NodePointingControlSimple
 from acs_syssim.models.imu import NodeIMUSimple
 from acs_syssim.models.rwa import NodeRWASimple
 from acs_syssim.models.sixdofsc import NodeSCRigidBodyRotationDynamics
-from acs_syssim.models.monsid import NodeMONSIDDiagnoser
+from acs_syssim.models.monsid import NodeMONSIDDiagnoser, NodeFaultPrinter
 from acs_syssim.models.sru import NodeStellarReferenceUnitSimple
 from acs_syssim.models.fault import DiagonalInertiaPerturbFault
-from acs_syssim.models.adder import AdderNode
+from acs_syssim.models.adder import AdderNode, ConcatNode
 from acs_syssim.models.mixer import (
     ReactionWheelMixerNode,
     InternalAngularMomentumMuxerNode,
@@ -62,7 +62,7 @@ parser.add_argument(
     "--sim-duration",
     type=float,
     help="Simulation duration in seconds",
-    default=15.0,
+    default=20.0,
     dest="sim_duration",
 )
 parser.add_argument(
@@ -87,35 +87,35 @@ rw_body_axis = [
 
 system = NodeSystem()
 # TODO Move the initialization of the state of this component to the init method of the component.
-node_rb = NodeSCRigidBodyRotationDynamics(x0_rb, config=args.node_config)
+node_rb = NodeSCRigidBodyRotationDynamics(x0_rb, config=args.node_config, use_finite_difference=True)
 node_imu1 = NodeIMUSimple(config=args.node_config, name="node_imu1")
 node_imu1.frequency = 100
 node_sru1 = NodeStellarReferenceUnitSimple(config=args.node_config, name="node_sru1")
-node_sru1.frequency = 10
+node_sru1.frequency = 100
 node_imu2 = NodeIMUSimple(config=args.node_config, name="node_imu2")
 node_imu2.frequency = 100
 node_sru2 = NodeStellarReferenceUnitSimple(config=args.node_config, name="node_sru2")
-node_sru2.frequency = 10
+node_sru2.frequency = 100
 node_encoder1 = NodeWheelEncoder(config=args.node_config, name="encoder_1")
 node_encoder2 = NodeWheelEncoder(config=args.node_config, name="encoder_2")
 node_encoder3 = NodeWheelEncoder(config=args.node_config, name="encoder_3")
 node_encoder4 = NodeWheelEncoder(config=args.node_config, name="encoder_4")
 node_rwa_1 = NodeRWASimple(
-    np.zeros((3,)), body_axis=rw_body_axis[0], config=args.node_config, name="rwa_1"
+    np.zeros((1,)), body_axis=rw_body_axis[0], config=args.node_config, name="rwa_1"
 )
-node_rwa_1.frequency = 60.0
+node_rwa_1.frequency = 100.0
 node_rwa_2 = NodeRWASimple(
-    np.zeros((3,)), body_axis=rw_body_axis[1], config=args.node_config, name="rwa_2"
+    np.zeros((1,)), body_axis=rw_body_axis[1], config=args.node_config, name="rwa_2"
 )
-node_rwa_2.frequency = 60.0
+node_rwa_2.frequency = 100.0
 node_rwa_3 = NodeRWASimple(
-    np.zeros((3,)), body_axis=rw_body_axis[2], config=args.node_config, name="rwa_3"
+    np.zeros((1,)), body_axis=rw_body_axis[2], config=args.node_config, name="rwa_3"
 )
-node_rwa_3.frequency = 60.0
+node_rwa_3.frequency = 100.0
 node_rwa_4 = NodeRWASimple(
-    np.zeros((3,)), body_axis=rw_body_axis[3], config=args.node_config, name="rwa_4"
+    np.zeros((1,)), body_axis=rw_body_axis[3], config=args.node_config, name="rwa_4"
 )
-node_rwa_4.frequency = 60.0
+node_rwa_4.frequency = 100.0
 node_int_ang_momentum_muxer = InternalAngularMomentumMuxerNode(
     inertia1=0.25e-1,
     inertia2=0.25e-1,
@@ -127,7 +127,7 @@ node_int_ang_momentum_muxer = InternalAngularMomentumMuxerNode(
     axis4_vector=rw_body_axis[3],
     config=args.node_config, name="int_ang_momentum_muxer"
 )
-node_control = NodePointingControlSimple(config=args.node_config, x0=np.zeros((3,)))
+node_control = NodePointingControlSimple(config=args.node_config)
 node_control.frequency = 100.0
 node_estimator = NodeKalmanEstimator(
     x0=np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -153,7 +153,7 @@ node_viz_est_rate = NodeScope(config=args.node_config, name="viz_est_rate")
 node_viz_est_rate.frequency = 100
 node_viz_est_pointing = NodeScope(config=args.node_config, name="viz_est_pointing")
 node_viz_est_pointing.frequency = 100
-node_monsid_logger = NodeMONSIDDiagnoser(config=args.node_config, name="monsid_logger")
+node_monsid_diagnoser = NodeMONSIDDiagnoser(config=args.node_config, name="monsid_logger")
 node_torque_adder = AdderNode(4, name="torque_adder")
 node_rw_mixer = ReactionWheelMixerNode(
 
@@ -165,13 +165,21 @@ node_rw_mixer = ReactionWheelMixerNode(
     name="rw_mixer",
 )
 node_internal_mtm_adder = AdderNode(4, name="internal_mtm_adder")
-# Faults Declaration
-imu_zero = ZeroFault("imu_zero", trigger_time=10.0)
-imu_zero.active = False
-inertia_fault = DiagonalInertiaPerturbFault(
-    "inertia_fault",
+node_concate_monsid_diagnosis = ConcatNode(4, name="concat_monsid_diagnosis")
+node_viz_monsid_diagnosis = NodeScope(
+    config=args.node_config, name="viz_monsid_diagnosis"
 )
-inertia_fault.active = False
+node_fault_printer = NodeFaultPrinter(
+    config=args.node_config, name="fault_printer"
+)
+
+# Faults Declaration
+imu_zero = ZeroFault("imu_zero", trigger_time=2.0)
+imu_zero.active = True
+# inertia_fault = DiagonalInertiaPerturbFault(
+#     "inertia_fault",
+# )
+# inertia_fault.active = False
 
 system.add_node(node_rb)
 system.add_node(node_imu1)
@@ -200,13 +208,16 @@ system.add_node(node_viz_rate)
 system.add_node(node_viz_pointing)
 system.add_node(node_viz_est_rate)
 system.add_node(node_viz_est_pointing)
-system.add_node(node_monsid_logger)
+system.add_node(node_monsid_diagnoser)
 system.add_node(node_health1)
 system.add_node(node_health2)
 system.add_node(node_health3)
 system.add_node(node_health4)
+system.add_node(node_concate_monsid_diagnosis)
+system.add_node(node_viz_monsid_diagnosis)
+system.add_node(node_fault_printer)
 
-system.add_faults([imu_zero, inertia_fault])
+system.add_faults([imu_zero,])
 
 # Node connections
 node_rb.o.output_w_sc >> node_imu1.i.input_true_angular_rate
@@ -242,10 +253,10 @@ node_rw_mixer.o.wheel2_torque >> node_rwa_2.i.tau_cmd
 node_rw_mixer.o.wheel3_torque >> node_rwa_3.i.tau_cmd
 node_rw_mixer.o.wheel4_torque >> node_rwa_4.i.tau_cmd
 
-node_rwa_1.o.rw_torque >> node_torque_adder.i.input_0
-node_rwa_2.o.rw_torque >> node_torque_adder.i.input_1
-node_rwa_3.o.rw_torque >> node_torque_adder.i.input_2
-node_rwa_4.o.rw_torque >> node_torque_adder.i.input_3
+node_rw_mixer.o.wheel1_torque >> node_torque_adder.i.input_0
+node_rw_mixer.o.wheel2_torque >> node_torque_adder.i.input_1
+node_rw_mixer.o.wheel3_torque >> node_torque_adder.i.input_2
+node_rw_mixer.o.wheel4_torque >> node_torque_adder.i.input_3
 
 node_rwa_1.o.rw_mtm >> node_internal_mtm_adder.i.input_0
 node_rwa_2.o.rw_mtm >> node_internal_mtm_adder.i.input_1
@@ -282,11 +293,39 @@ node_estimator.i.imu2_rate << node_imu2.o.output_measure_angular_rate
 node_estimator.i.sru2_q << node_sru2.o.output_q_sc2eci_measure
 node_estimator.i.torque_cmd << node_control.o.output_tau_cmd
 
+node_monsid_diagnoser.i.enc1 << node_encoder1.o.enc_out
+node_monsid_diagnoser.i.enc2 << node_encoder2.o.enc_out
+node_monsid_diagnoser.i.enc3 << node_encoder3.o.enc_out
+node_monsid_diagnoser.i.enc4 << node_encoder4.o.enc_out
+node_monsid_diagnoser.i.imu1 << node_imu1.o.output_measure_angular_rate
+node_monsid_diagnoser.i.imu2 << node_imu2.o.output_measure_angular_rate
+node_monsid_diagnoser.i.sru1 << node_sru1.o.output_q_sc2eci_measure
+node_monsid_diagnoser.i.sru2 << node_sru2.o.output_q_sc2eci_measure
+node_monsid_diagnoser.i.rw1_cmd << node_rw_mixer.o.wheel1_torque
+node_monsid_diagnoser.i.rw2_cmd << node_rw_mixer.o.wheel2_torque
+node_monsid_diagnoser.i.rw3_cmd << node_rw_mixer.o.wheel3_torque
+node_monsid_diagnoser.i.rw4_cmd << node_rw_mixer.o.wheel4_torque
+node_monsid_diagnoser.i.dynamics_rate << node_rb.o.output_w_sc
+node_monsid_diagnoser.i.dynamics_orientation << node_rb.o.output_q_sc_to_eci
+node_monsid_diagnoser.i.rw1_momentum << node_rwa_1.o.rw_mtm
+node_monsid_diagnoser.i.rw2_momentum << node_rwa_2.o.rw_mtm
+node_monsid_diagnoser.i.rw3_momentum << node_rwa_3.o.rw_mtm
+node_monsid_diagnoser.i.rw4_momentum << node_rwa_4.o.rw_mtm
+
+node_monsid_diagnoser.o.rw1_health >> node_concate_monsid_diagnosis.i.input_0
+node_monsid_diagnoser.o.rw2_health >> node_concate_monsid_diagnosis.i.input_1
+node_monsid_diagnoser.o.rw3_health >> node_concate_monsid_diagnosis.i.input_2
+node_monsid_diagnoser.o.rw4_health >> node_concate_monsid_diagnosis.i.input_3
+
+node_concate_monsid_diagnosis.o.concat >> node_viz_monsid_diagnosis.i.scope
+
+node_fault_printer.i.fault_detected << node_monsid_diagnoser.o.fault_detected
+
 # Port fault registration
 node_imu1.o.output_measure_angular_rate.add_fault(imu_zero)
 
 # Param fault registration
-node_rb.p.inertia_moment.add_fault(inertia_fault)
+# node_rb.p.inertia_moment.add_fault(inertia_fault)
 
 print(system)
 
@@ -296,3 +335,6 @@ system.simulate(
     save_dir=None,
     sim_name=None,
 )
+
+def main():
+    pass

@@ -21,10 +21,9 @@ class NodeSCRigidBodyRotationDynamicsParameters(NamedTuple):
     """
     inertia_moment: spacecraft inertia moment diagonal. 3x1 [kg m^2]
     """
-    
 
 class NodeSCRigidBodyRotationDynamics(NodeDifferential):
-    def __init__(self, x0: np.ndarray, **kwargs):
+    def __init__(self, x0: np.ndarray, use_finite_difference: bool = False, **kwargs):
         """Spacecraft rigid body rotational dynamics. Implementation of Euler's equation for rigid bodies. Orientation represented as a quaternion.
 
         Args:
@@ -49,8 +48,10 @@ class NodeSCRigidBodyRotationDynamics(NodeDifferential):
         self._i = NodeSCRigidBodyRotationDynamicsInputs(input_mtm_internal_sc, input_tau_external_sc, input_inertia_moment)
         self._o = NodeSCRigidBodyRotationDynamicsOutputs(output_q_sc_to_eci, output_w_sc)
         self._p = NodeSCRigidBodyRotationDynamicsParameters(
-            inertia_moment=NodeParameter("inertia_moment", np.diag([1.0, 1.0, 1.0]))
+            inertia_moment=NodeParameter("inertia_moment", np.diag([1.0, 1.0, 1.0])),
         )
+
+        self._use_finite_difference = use_finite_difference
         super().__init__(x0, self._i, self._o, self._p, **kwargs)
 
     def initialize(self):
@@ -65,21 +66,32 @@ class NodeSCRigidBodyRotationDynamics(NodeDifferential):
         h_int_sc = np.zeros((3,)) if np.any(h_int_sc) == None else h_int_sc
         j = np.eye(3) if np.any(j) == None else j
 
-        def integrand(t, x):
-            return self._dynamics(x, h_int_sc, tau_ext_sc, j)
+        dt = sim_time - self._t
 
-        sol = solve_ivp(integrand, (self._t, sim_time), self._x)
+        if self._use_finite_difference:
+            # Single step finite difference integration
+            xdot = self._dynamics(self._x, h_int_sc, tau_ext_sc, j)
+            x_tmp = self._x + xdot * dt
+        else:
+            # Use solve_ivp integration
+            def integrand(t, x):
+                return self._dynamics(x, h_int_sc, tau_ext_sc, j)
+
+            sol = solve_ivp(integrand, (self._t, sim_time), self._x)
+            x_tmp = sol.y[:, -1]
 
         self._t = sim_time
-        x_tmp = sol.y[:, -1]
         # Quaternion regularization
         qx, qy, qz, qw = Rotation.from_quat(
             [x_tmp[1], x_tmp[2], x_tmp[3], x_tmp[0]]
         ).as_quat(canonical=True)
         x_tmp[0:4] = [qw, qx, qy, qz]
         self._x = x_tmp
-
         q_sc_to_eci, w_sc = self._output(self._x)
+
+        # Resolve double cover: ensure real part (scalar, first element) is positive
+        if q_sc_to_eci[0] < 0:
+            q_sc_to_eci = -q_sc_to_eci
 
         self._o.output_q_sc_to_eci.shift_out(q_sc_to_eci)
         self._o.output_w_sc.shift_out(w_sc)

@@ -1,6 +1,6 @@
 import numpy as np
 
-from syssim import NodeDifferential, InputPort, OutputPort
+from syssim import Node, InputPort, OutputPort
 from typing import NamedTuple
 
 
@@ -18,8 +18,8 @@ class NodePointingControlSimpleOutputs(NamedTuple):
     output_w_err: OutputPort
 
 
-class NodePointingControlSimple(NodeDifferential):
-    def __init__(self, x0: np.ndarray, **kwargs):
+class NodePointingControlSimple(Node):
+    def __init__(self, **kwargs):
         """A simple pointing controller based on quaternion feedback. Based on the reference [1] with added integral term.
         [1] B. Wie, H. Weiss, and A. Arapostathis, “Quarternion feedback regulator for spacecraft eigenaxis rotations,” Journal of Guidance, Control, and Dynamics, vol. 12, no. 3, pp. 375–380, May 1989, doi: 10.2514/3.20418.
 
@@ -58,12 +58,11 @@ class NodePointingControlSimple(NodeDifferential):
             OutputPort("output_w_err", self)
         )
 
-        super().__init__(x0, self._i, self._o, **kwargs)
+        super().__init__(self._i, self._o, **kwargs)
 
     def initialize(self):
         self._kp = self._config["pointing_kp"]
         self._kd = self._config["pointing_kd"]
-        self._ki = self._config["pointing_ki"]
         if "inertia" in self._config:
             self._inertia = np.array(self._config["inertia"])
         else:
@@ -72,11 +71,11 @@ class NodePointingControlSimple(NodeDifferential):
 
     def update(self, sim_time: float):
         q_cmd = self._i.input_q_cmd.read()
-        if np.any(q_cmd) is None:
-            q_cmd = np.array([1, 0, 0, 0])
+        # if np.any(q_cmd) is None:
+        #     q_cmd = np.array([1, 0, 0, 0])
         q = self._i.input_q.read()
-        if np.any(q) is None:
-            q = np.array([1, 0, 0, 0])
+        # if np.any(q) is None:
+        #     q = np.array([1, 0, 0, 0])
 
         q_cmd_w, q_cmd_x, q_cmd_y, q_cmd_z = q_cmd
         qw, qx, qy, qz = q
@@ -93,11 +92,11 @@ class NodePointingControlSimple(NodeDifferential):
         q_e_vec = (qc @ np.array([qx, qy, qz, qw]))[0:3]
 
         w_cmd = self._i.input_w_cmd.read()
-        if np.any(w_cmd) is None:
-            w_cmd = np.zeros((3,))
+        # if np.any(w_cmd) is None:
+        #     w_cmd = np.zeros((3,))
         w = self._i.input_w.read()
-        if np.any(w) is None:
-            w = np.zeros((3,))
+        # if np.any(w) is None:
+        #     w = np.zeros((3,))
 
         w_e = w_cmd - w
 
@@ -105,13 +104,7 @@ class NodePointingControlSimple(NodeDifferential):
         if np.any(mtm_in) == None:
             mtm_in = np.zeros((3,))
 
-        if np.linalg.norm(q_e_vec) < self._config["i_enable_limit"]:
-            dt = sim_time - self._t
-            self._x = self._dynamics(q_e_vec) * dt
-
-        self._t = sim_time
-
-        u = self._output(self._x, q_e_vec, w_e, mtm_in, w)
+        u = self._output(q_e_vec, w_e, mtm_in, w)
 
         self._o.output_tau_cmd.shift_out(u)
         self._o.output_q_err.shift_out(q_e_vec)
@@ -125,25 +118,15 @@ class NodePointingControlSimple(NodeDifferential):
     def o(self):
         return self._o
 
-    def _dynamics(self, q_e_vec: np.ndarray):
-        return q_e_vec
-
     def _output(
         self,
-        x: np.ndarray,
         q_e: np.ndarray,
         w_e: np.ndarray,
         mtm_int: np.ndarray,
         w: np.ndarray,
     ):
-        if np.linalg.norm(q_e) < self._config["i_enable_limit"]:
-            integral = np.clip(
-                self._x, -self._config["i_mag_limit"], self._config["i_mag_limit"]
-            )
-        else:
-            integral = np.zeros((3,))
 
-        return self._kp * q_e + self._kd * w_e
+        return -self._kp * q_e + self._kd * w_e
 
         # return self._skew(w) @ (self._inertia @ w + mtm_int) + self._inertia @ (
         #     self._kp * q_e + self._ki * integral + self._kd * w_e

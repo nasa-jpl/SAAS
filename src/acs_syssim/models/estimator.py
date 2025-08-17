@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.spatial.transform import Rotation
 from typing import NamedTuple
 from syssim.core import NodeDifferential, InputPort, OutputPort
 
