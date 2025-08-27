@@ -176,6 +176,8 @@ node_fault_printer = NodeFaultPrinter(
 # Faults Declaration
 imu_zero = ZeroFault("imu_zero", trigger_time=2.0)
 imu_zero.active = True
+sru_zero = ZeroFault("sru_zero", trigger_time=2.1)
+sru_zero.active = True
 # inertia_fault = DiagonalInertiaPerturbFault(
 #     "inertia_fault",
 # )
@@ -217,7 +219,7 @@ system.add_node(node_concate_monsid_diagnosis)
 system.add_node(node_viz_monsid_diagnosis)
 system.add_node(node_fault_printer)
 
-system.add_faults([imu_zero,])
+system.add_faults([imu_zero, sru_zero])
 
 # Node connections
 node_rb.o.output_w_sc >> node_imu1.i.input_true_angular_rate
@@ -323,6 +325,7 @@ node_fault_printer.i.fault_detected << node_monsid_diagnoser.o.fault_detected
 
 # Port fault registration
 node_imu1.o.output_measure_angular_rate.add_fault(imu_zero)
+node_sru1.o.output_q_sc2eci_measure.add_fault(sru_zero)
 
 # Param fault registration
 # node_rb.p.inertia_moment.add_fault(inertia_fault)

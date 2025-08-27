@@ -252,10 +252,10 @@ class NodeMONSIDDiagnoser(Node):
                 # Update previous state
                 self._previous_diagnosis[comp_name] = is_faulty
 
-            self.o.rw1_health.shift_out(np.array(True) if component_final["RWA_1"]["status"] != "Faulty" else np.array(False))
-            self.o.rw2_health.shift_out(np.array(True) if component_final["RWA_2"]["status"] != "Faulty" else np.array(False))
-            self.o.rw3_health.shift_out(np.array(True) if component_final["RWA_3"]["status"] != "Faulty" else np.array(False))
-            self.o.rw4_health.shift_out(np.array(True) if component_final["RWA_4"]["status"] != "Faulty" else np.array(False))
+            self.o.rw1_health.shift_out(np.array(True) if component_final["IMU_1"]["status"] != "Faulty" else np.array(False))
+            self.o.rw2_health.shift_out(np.array(True) if component_final["IMU_2"]["status"] != "Faulty" else np.array(False))
+            self.o.rw3_health.shift_out(np.array(True) if component_final["SRU_1"]["status"] != "Faulty" else np.array(False))
+            self.o.rw4_health.shift_out(np.array(True) if component_final["SRU_2"]["status"] != "Faulty" else np.array(False))
             self.o.fault_detected.shift_out(np.array(newly_faulty_components))
 
         except subprocess.CalledProcessError as e:

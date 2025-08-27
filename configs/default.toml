@@ -14,7 +14,7 @@ w_bias = 0.0
 w_noise = 0.0
 w_bias = 0.0
 [node_imu1]
-w_noise = 0.0
+w_noise = 0.01
 a_noise = 0.001
 w_bias = 0.0
 a_bias = 0.0
@@ -22,7 +22,7 @@ a_bias = 0.0
 sru_cross_noise = 0.0
 sru_roll_noise = 0.0
 [node_imu2]
-w_noise = 0.0
+w_noise = 0.01
 a_noise = 0.001
 w_bias = 0.0
 a_bias = 0.0
@@ -77,4 +77,4 @@ legend = ["q0", "q1", "q2", "q3"]
 title = "MONSID Diagnosis"
 xlabel = "Time (s)"
 ylabel = "Health Status"
-legend = ["RW1", "RW2", "RW3", "RW4"]
+legend = ["IMU1", "IMU2", "SRU1", "SRU2"]
