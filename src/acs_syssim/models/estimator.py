@@ -87,21 +87,47 @@ class NodeKalmanEstimator(NodeDifferential):
         F = self._state_update_jacobian(x_pred, dt, self._inertia)
         P_pred = F @ self._P @ F.T + self._Q
 
-        # Update with IMU rate measurements
-        H_imu = self._H[8:14, :] # Section of measurement matrix for IMU rates
-        y_imu = np.concatenate([imu1, imu2]) - np.concatenate([self._x[4:], self._x[4:]]) # Innovation pre-fit
-        S_imu = H_imu @ P_pred @ H_imu.T + self._R_imu # Innovation covariance
-        K_imu = P_pred @ H_imu.T @ np.linalg.inv(S_imu) # Kalman gain
-        x_upd = x_pred + K_imu @ y_imu
-        P_upd = (np.eye(7) - K_imu @ H_imu) @ P_pred
+        # Sequential measurement updates: IMU1, IMU2, SRU1, SRU2
 
-        # Measurement update (SRU)
-        H_sru = self._H[:8, :]  # Section of measurement matrix for SRU quaternions
-        y_sru = np.concatenate([sru1, sru2]) - np.concatenate([self._x[:4], self._x[:4]])  # Innovation pre-fit
-        S_sru = H_sru @ P_upd @ H_sru.T + self._R_sru # Innovation covariance
-        K_sru = P_upd @ H_sru.T @ np.linalg.inv(S_sru) # Kalman gain
-        x_final = x_upd + K_sru @ y_sru 
-        P_final = (np.eye(7) - K_sru @ H_sru) @ P_upd
+        # IMU1 update (3x measurement)
+        H_imu1 = self._H[8:11, :]  # rows for imu1 rates
+        z_imu1 = imu1
+        y_imu1 = z_imu1 - (H_imu1 @ x_pred)
+        R_imu1 = self._R_imu[:3, :3]
+        S = H_imu1 @ P_pred @ H_imu1.T + R_imu1
+        K = P_pred @ H_imu1.T @ np.linalg.inv(S)
+        x_pred = x_pred + K @ y_imu1
+        P_pred = (np.eye(7) - K @ H_imu1) @ P_pred
+
+        # IMU2 update (3x measurement)
+        H_imu2 = self._H[11:14, :]  # rows for imu2 rates
+        z_imu2 = imu2
+        y_imu2 = z_imu2 - (H_imu2 @ x_pred)
+        R_imu2 = self._R_imu[3:6, 3:6]
+        S = H_imu2 @ P_pred @ H_imu2.T + R_imu2
+        K = P_pred @ H_imu2.T @ np.linalg.inv(S)
+        x_pred = x_pred + K @ y_imu2
+        P_pred = (np.eye(7) - K @ H_imu2) @ P_pred
+
+        # SRU1 update (4x measurement)
+        H_sru1 = self._H[0:4, :]  # rows for sru1 quaternion
+        z_sru1 = sru1
+        y_sru1 = z_sru1 - (H_sru1 @ x_pred)
+        R_sru1 = self._R_sru[:4, :4]
+        S = H_sru1 @ P_pred @ H_sru1.T + R_sru1
+        K = P_pred @ H_sru1.T @ np.linalg.inv(S)
+        x_pred = x_pred + K @ y_sru1
+        P_pred = (np.eye(7) - K @ H_sru1) @ P_pred
+
+        # SRU2 update (4x measurement)
+        H_sru2 = self._H[4:8, :]  # rows for sru2 quaternion
+        z_sru2 = sru2
+        y_sru2 = z_sru2 - (H_sru2 @ x_pred)
+        R_sru2 = self._R_sru[4:8, 4:8]
+        S = H_sru2 @ P_pred @ H_sru2.T + R_sru2
+        K = P_pred @ H_sru2.T @ np.linalg.inv(S)
+        x_final = x_pred + K @ y_sru2
+        P_final = (np.eye(7) - K @ H_sru2) @ P_pred
 
         # Normalize quaternion
         x_final[:4] /= np.linalg.norm(x_final[:4])
