@@ -13,6 +13,18 @@ w_bias = 0.0
 [encoder_4]
 w_noise = 0.0
 w_bias = 0.0
+[encoder_5]
+w_noise = 0.0
+w_bias = 0.0
+[encoder_6]
+w_noise = 0.0
+w_bias = 0.0
+[encoder_7]
+w_noise = 0.0
+w_bias = 0.0
+[encoder_8]
+w_noise = 0.0
+w_bias = 0.0
 [node_imu1]
 w_noise = 0.01
 a_noise = 0.001
@@ -30,13 +42,21 @@ a_bias = 0.0
 sru_cross_noise = 0.0
 sru_roll_noise = 0.0
 [rwa_1]
-rwa_inertia = 0.25e-1
+rwa_inertia = 0.12e-1
 [rwa_2]
-rwa_inertia = 0.25e-1
+rwa_inertia = 0.12e-1
 [rwa_3]
-rwa_inertia = 0.25e-1
+rwa_inertia = 0.12e-1
 [rwa_4]
-rwa_inertia = 0.25e-1
+rwa_inertia = 0.12e-1
+[rwa_5]
+rwa_inertia = 0.12e-1
+[rwa_6]
+rwa_inertia = 0.12e-1
+[rwa_7]
+rwa_inertia = 0.12e-1
+[rwa_8]
+rwa_inertia = 0.12e-1
 [NodePointingControlSimple-1]
 pointing_kp = 5.0
 pointing_kd = 3.5
@@ -77,4 +97,9 @@ legend = ["q0", "q1", "q2", "q3"]
 title = "MONSID Diagnosis"
 xlabel = "Time (s)"
 ylabel = "Health Status"
-legend = ["IMU1", "IMU2", "SRU1", "SRU2"]
+legend = ["RW1", "RW2", "RW3", "RW4", "RW5", "RW6"]
+[viz_rw_torque_cmds]
+title = "Reaction Wheel Torque Commands"
+xlabel = "Time (s)"
+ylabel = "Torque (Nm)"
+legend = ["RW1", "RW2", "RW3", "RW4", "RW5", "RW6", "RW7", "RW8"]

@@ -76,12 +76,16 @@ config = toml.load(args.node_config)
 
 x0_rb = rigid_body_x0(0.0, 6.0)
 
-# Create body fixed direction vectors for each of four reaction wheels in a tetrahedron. One of those vectors is aligned with the body z-axis
+# Create body fixed direction vectors for each of six reaction wheels. 
 rw_body_axis = [
     [0.0, 0.0, 1.0],  # aligned with z-axis
     [(9 / 8) ** 0.5, 0.0, -1 / 3],
     [-((2 / 9) ** 0.5), (2 / 3) ** 0.5, -1 / 3],
     [-((2 / 9) ** 0.5), -((2 / 3) ** 0.5), -1 / 3],
+    [0.0, 0.0, -1.0],
+    [(9 / 8) ** 0.5, 0.0, 1 / 3],
+    [-((2 / 9) ** 0.5), (2 / 3) ** 0.5, 1 / 3],
+    [-((2 / 9) ** 0.5), -((2 / 3) ** 0.5), 1 / 3],
 ]
 
 
@@ -100,6 +104,10 @@ node_encoder1 = NodeWheelEncoder(config=args.node_config, name="encoder_1")
 node_encoder2 = NodeWheelEncoder(config=args.node_config, name="encoder_2")
 node_encoder3 = NodeWheelEncoder(config=args.node_config, name="encoder_3")
 node_encoder4 = NodeWheelEncoder(config=args.node_config, name="encoder_4")
+node_encoder5 = NodeWheelEncoder(config=args.node_config, name="encoder_5")
+node_encoder6 = NodeWheelEncoder(config=args.node_config, name="encoder_6")
+node_encoder7 = NodeWheelEncoder(config=args.node_config, name="encoder_7")
+node_encoder8 = NodeWheelEncoder(config=args.node_config, name="encoder_8")
 node_rwa_1 = NodeRWASimple(
     np.zeros((1,)), body_axis=rw_body_axis[0], config=args.node_config, name="rwa_1"
 )
@@ -116,15 +124,39 @@ node_rwa_4 = NodeRWASimple(
     np.zeros((1,)), body_axis=rw_body_axis[3], config=args.node_config, name="rwa_4"
 )
 node_rwa_4.frequency = 100.0
+node_rwa_5 = NodeRWASimple(
+    np.zeros((1,)), body_axis=rw_body_axis[4], config=args.node_config, name="rwa_5"
+)
+node_rwa_5.frequency = 100.0
+node_rwa_6 = NodeRWASimple(
+    np.zeros((1,)), body_axis=rw_body_axis[5], config=args.node_config, name="rwa_6"
+)
+node_rwa_6.frequency = 100.0
+node_rwa_7 = NodeRWASimple(
+    np.zeros((1,)), body_axis=rw_body_axis[6], config=args.node_config, name="rwa_7"
+)
+node_rwa_7.frequency = 100.0
+node_rwa_8 = NodeRWASimple(
+    np.zeros((1,)), body_axis=rw_body_axis[7], config=args.node_config, name="rwa_8"
+)
+node_rwa_8.frequency = 100.0
 node_int_ang_momentum_muxer = InternalAngularMomentumMuxerNode(
-    inertia1=0.25e-1,
-    inertia2=0.25e-1,
-    inertia3=0.25e-1,
-    inertia4=0.25e-1,
+    inertia1=0.12e-1,
+    inertia2=0.12e-1,
+    inertia3=0.12e-1,
+    inertia4=0.12e-1,
+    inertia5=0.12e-1,
+    inertia6=0.12e-1,
+    inertia7=0.12e-1,
+    inertia8=0.12e-1,
     axis1_vector=rw_body_axis[0],
     axis2_vector=rw_body_axis[1],
     axis3_vector=rw_body_axis[2],
     axis4_vector=rw_body_axis[3],
+    axis5_vector=rw_body_axis[4],
+    axis6_vector=rw_body_axis[5],
+    axis7_vector=rw_body_axis[6],
+    axis8_vector=rw_body_axis[7],
     config=args.node_config, name="int_ang_momentum_muxer"
 )
 node_control = NodePointingControlSimple(config=args.node_config)
@@ -141,6 +173,10 @@ node_health1 = NodeConstant(True, config=args.node_config, name="health1")
 node_health2 = NodeConstant(True, config=args.node_config, name="health2")
 node_health3 = NodeConstant(True, config=args.node_config, name="health3")
 node_health4 = NodeConstant(True, config=args.node_config, name="health4")
+node_health5 = NodeConstant(True, config=args.node_config, name="health5")
+node_health6 = NodeConstant(True, config=args.node_config, name="health6")
+node_health7 = NodeConstant(True, config=args.node_config, name="health7")
+node_health8 = NodeConstant(True, config=args.node_config, name="health8")
 node_viz_true_rate = NodeScope(config=args.node_config, name="viz_true_rate")
 node_viz_true_rate.frequency = 100
 node_viz_torque = NodeScope(config=args.node_config, name="viz_torque")
@@ -154,30 +190,37 @@ node_viz_est_rate.frequency = 100
 node_viz_est_pointing = NodeScope(config=args.node_config, name="viz_est_pointing")
 node_viz_est_pointing.frequency = 100
 node_monsid_diagnoser = NodeMONSIDDiagnoser(config=args.node_config, name="monsid_logger")
-node_torque_adder = AdderNode(4, name="torque_adder")
+node_torque_adder = AdderNode(8, name="torque_adder")
+# Add a fault printer node used for displaying detected faults
+node_fault_printer = NodeFaultPrinter(config=args.node_config, name="fault_printer")
+node_fault_printer.frequency = 100
 node_rw_mixer = ReactionWheelMixerNode(
 
     axis1=np.array(rw_body_axis[0]),
     axis2=np.array(rw_body_axis[1]),
     axis3=np.array(rw_body_axis[2]),
     axis4=np.array(rw_body_axis[3]),
+    axis5=np.array(rw_body_axis[4]),
+    axis6=np.array(rw_body_axis[5]),
+    axis7=np.array(rw_body_axis[6]),
+    axis8=np.array(rw_body_axis[7]),
     config=args.node_config,
     name="rw_mixer",
 )
-node_internal_mtm_adder = AdderNode(4, name="internal_mtm_adder")
-node_concate_monsid_diagnosis = ConcatNode(4, name="concat_monsid_diagnosis")
+node_internal_mtm_adder = AdderNode(8, name="internal_mtm_adder")
+node_concate_monsid_diagnosis = ConcatNode(8, name="concat_monsid_diagnosis")
 node_viz_monsid_diagnosis = NodeScope(
     config=args.node_config, name="viz_monsid_diagnosis"
 )
-node_fault_printer = NodeFaultPrinter(
-    config=args.node_config, name="fault_printer"
-)
-
+# New: visualize individual RW torque commands
+node_concat_rw_torques = ConcatNode(8, name="concat_rw_torques")
+node_viz_rw_torque_cmds = NodeScope(config=args.node_config, name="viz_rw_torque_cmds")
+node_viz_rw_torque_cmds.frequency = 100
 # Faults Declaration
 imu_zero = ZeroFault("imu_zero", trigger_time=2.0)
-imu_zero.active = True
+imu_zero.active = False
 sru_zero = ZeroFault("sru_zero", trigger_time=2.1)
-sru_zero.active = True
+sru_zero.active = False
 # inertia_fault = DiagonalInertiaPerturbFault(
 #     "inertia_fault",
 # )
@@ -192,10 +235,18 @@ system.add_node(node_rwa_1)
 system.add_node(node_rwa_2)
 system.add_node(node_rwa_3)
 system.add_node(node_rwa_4)
+system.add_node(node_rwa_5)
+system.add_node(node_rwa_6)
+system.add_node(node_rwa_7)
+system.add_node(node_rwa_8)
 system.add_node(node_encoder1)
 system.add_node(node_encoder2)
 system.add_node(node_encoder3)
 system.add_node(node_encoder4)
+system.add_node(node_encoder5)
+system.add_node(node_encoder6)
+system.add_node(node_encoder7)
+system.add_node(node_encoder8)
 system.add_node(node_rw_mixer)
 system.add_node(node_torque_adder)
 system.add_node(node_internal_mtm_adder)
@@ -215,9 +266,16 @@ system.add_node(node_health1)
 system.add_node(node_health2)
 system.add_node(node_health3)
 system.add_node(node_health4)
+system.add_node(node_health5)
+system.add_node(node_health6)
+system.add_node(node_health7)
+system.add_node(node_health8)
 system.add_node(node_concate_monsid_diagnosis)
 system.add_node(node_viz_monsid_diagnosis)
 system.add_node(node_fault_printer)
+# Register new nodes
+system.add_node(node_concat_rw_torques)
+system.add_node(node_viz_rw_torque_cmds)
 
 system.add_faults([imu_zero, sru_zero])
 
@@ -249,26 +307,59 @@ node_health1.o.constant_out >> node_rw_mixer.i.axis1_health
 node_health2.o.constant_out >> node_rw_mixer.i.axis2_health
 node_health3.o.constant_out >> node_rw_mixer.i.axis3_health
 node_health4.o.constant_out >> node_rw_mixer.i.axis4_health
+node_health5.o.constant_out >> node_rw_mixer.i.axis5_health
+node_health6.o.constant_out >> node_rw_mixer.i.axis6_health
+node_health7.o.constant_out >> node_rw_mixer.i.axis7_health
+node_health8.o.constant_out >> node_rw_mixer.i.axis8_health
 
 node_rw_mixer.o.wheel1_torque >> node_rwa_1.i.tau_cmd
 node_rw_mixer.o.wheel2_torque >> node_rwa_2.i.tau_cmd
 node_rw_mixer.o.wheel3_torque >> node_rwa_3.i.tau_cmd
 node_rw_mixer.o.wheel4_torque >> node_rwa_4.i.tau_cmd
+node_rw_mixer.o.wheel5_torque >> node_rwa_5.i.tau_cmd
+node_rw_mixer.o.wheel6_torque >> node_rwa_6.i.tau_cmd
+node_rw_mixer.o.wheel7_torque >> node_rwa_7.i.tau_cmd
+node_rw_mixer.o.wheel8_torque >> node_rwa_8.i.tau_cmd
 
 node_rw_mixer.o.wheel1_torque >> node_torque_adder.i.input_0
 node_rw_mixer.o.wheel2_torque >> node_torque_adder.i.input_1
 node_rw_mixer.o.wheel3_torque >> node_torque_adder.i.input_2
 node_rw_mixer.o.wheel4_torque >> node_torque_adder.i.input_3
+node_rw_mixer.o.wheel5_torque >> node_torque_adder.i.input_4
+node_rw_mixer.o.wheel6_torque >> node_torque_adder.i.input_5
+node_rw_mixer.o.wheel7_torque >> node_torque_adder.i.input_6
+node_rw_mixer.o.wheel8_torque >> node_torque_adder.i.input_7
+
+# Connect each wheel torque to the concat node for visualization
+node_rw_mixer.o.wheel1_torque >> node_concat_rw_torques.i.input_0
+node_rw_mixer.o.wheel2_torque >> node_concat_rw_torques.i.input_1
+node_rw_mixer.o.wheel3_torque >> node_concat_rw_torques.i.input_2
+node_rw_mixer.o.wheel4_torque >> node_concat_rw_torques.i.input_3
+node_rw_mixer.o.wheel5_torque >> node_concat_rw_torques.i.input_4
+node_rw_mixer.o.wheel6_torque >> node_concat_rw_torques.i.input_5
+node_rw_mixer.o.wheel7_torque >> node_concat_rw_torques.i.input_6
+node_rw_mixer.o.wheel8_torque >> node_concat_rw_torques.i.input_7
+
+# Feed concatenated torques to the viz scope
+node_concat_rw_torques.o.concat >> node_viz_rw_torque_cmds.i.scope
 
 node_rwa_1.o.rw_mtm >> node_internal_mtm_adder.i.input_0
 node_rwa_2.o.rw_mtm >> node_internal_mtm_adder.i.input_1
 node_rwa_3.o.rw_mtm >> node_internal_mtm_adder.i.input_2
 node_rwa_4.o.rw_mtm >> node_internal_mtm_adder.i.input_3
+node_rwa_5.o.rw_mtm >> node_internal_mtm_adder.i.input_4
+node_rwa_6.o.rw_mtm >> node_internal_mtm_adder.i.input_5
+node_rwa_7.o.rw_mtm >> node_internal_mtm_adder.i.input_6
+node_rwa_8.o.rw_mtm >> node_internal_mtm_adder.i.input_7
 
 node_encoder1.o.enc_out >> node_int_ang_momentum_muxer.i.wheel1_speed
 node_encoder2.o.enc_out >> node_int_ang_momentum_muxer.i.wheel2_speed
 node_encoder3.o.enc_out >> node_int_ang_momentum_muxer.i.wheel3_speed
 node_encoder4.o.enc_out >> node_int_ang_momentum_muxer.i.wheel4_speed
+node_encoder5.o.enc_out >> node_int_ang_momentum_muxer.i.wheel5_speed
+node_encoder6.o.enc_out >> node_int_ang_momentum_muxer.i.wheel6_speed
+node_encoder7.o.enc_out >> node_int_ang_momentum_muxer.i.wheel7_speed
+node_encoder8.o.enc_out >> node_int_ang_momentum_muxer.i.wheel8_speed
 
 node_int_ang_momentum_muxer.o.angular_momentum >> node_control.i.input_mtm_int
 
@@ -276,6 +367,10 @@ node_rwa_1.o.rw_speed >> node_encoder1.i.enc_in
 node_rwa_2.o.rw_speed >> node_encoder2.i.enc_in
 node_rwa_3.o.rw_speed >> node_encoder3.i.enc_in
 node_rwa_4.o.rw_speed >> node_encoder4.i.enc_in
+node_rwa_5.o.rw_speed >> node_encoder5.i.enc_in
+node_rwa_6.o.rw_speed >> node_encoder6.i.enc_in
+node_rwa_7.o.rw_speed >> node_encoder7.i.enc_in
+node_rwa_8.o.rw_speed >> node_encoder8.i.enc_in
 
 node_rate_cmd.o.constant_out >> node_control.i.input_w_cmd
 node_quat_cmd.o.constant_out >> node_control.i.input_q_cmd
@@ -299,6 +394,10 @@ node_monsid_diagnoser.i.enc1 << node_encoder1.o.enc_out
 node_monsid_diagnoser.i.enc2 << node_encoder2.o.enc_out
 node_monsid_diagnoser.i.enc3 << node_encoder3.o.enc_out
 node_monsid_diagnoser.i.enc4 << node_encoder4.o.enc_out
+node_monsid_diagnoser.i.enc5 << node_encoder5.o.enc_out
+node_monsid_diagnoser.i.enc6 << node_encoder6.o.enc_out
+node_monsid_diagnoser.i.enc7 << node_encoder7.o.enc_out
+node_monsid_diagnoser.i.enc8 << node_encoder8.o.enc_out
 node_monsid_diagnoser.i.imu1 << node_imu1.o.output_measure_angular_rate
 node_monsid_diagnoser.i.imu2 << node_imu2.o.output_measure_angular_rate
 node_monsid_diagnoser.i.sru1 << node_sru1.o.output_q_sc2eci_measure
@@ -307,17 +406,29 @@ node_monsid_diagnoser.i.rw1_cmd << node_rw_mixer.o.wheel1_torque
 node_monsid_diagnoser.i.rw2_cmd << node_rw_mixer.o.wheel2_torque
 node_monsid_diagnoser.i.rw3_cmd << node_rw_mixer.o.wheel3_torque
 node_monsid_diagnoser.i.rw4_cmd << node_rw_mixer.o.wheel4_torque
+node_monsid_diagnoser.i.rw5_cmd << node_rw_mixer.o.wheel5_torque
+node_monsid_diagnoser.i.rw6_cmd << node_rw_mixer.o.wheel6_torque
+node_monsid_diagnoser.i.rw7_cmd << node_rw_mixer.o.wheel7_torque
+node_monsid_diagnoser.i.rw8_cmd << node_rw_mixer.o.wheel8_torque
 node_monsid_diagnoser.i.dynamics_rate << node_rb.o.output_w_sc
 node_monsid_diagnoser.i.dynamics_orientation << node_rb.o.output_q_sc_to_eci
 node_monsid_diagnoser.i.rw1_momentum << node_rwa_1.o.rw_mtm
 node_monsid_diagnoser.i.rw2_momentum << node_rwa_2.o.rw_mtm
 node_monsid_diagnoser.i.rw3_momentum << node_rwa_3.o.rw_mtm
 node_monsid_diagnoser.i.rw4_momentum << node_rwa_4.o.rw_mtm
+node_monsid_diagnoser.i.rw5_momentum << node_rwa_5.o.rw_mtm
+node_monsid_diagnoser.i.rw6_momentum << node_rwa_6.o.rw_mtm
+node_monsid_diagnoser.i.rw7_momentum << node_rwa_7.o.rw_mtm
+node_monsid_diagnoser.i.rw8_momentum << node_rwa_8.o.rw_mtm
 
 node_monsid_diagnoser.o.rw1_health >> node_concate_monsid_diagnosis.i.input_0
 node_monsid_diagnoser.o.rw2_health >> node_concate_monsid_diagnosis.i.input_1
 node_monsid_diagnoser.o.rw3_health >> node_concate_monsid_diagnosis.i.input_2
 node_monsid_diagnoser.o.rw4_health >> node_concate_monsid_diagnosis.i.input_3
+node_monsid_diagnoser.o.rw5_health >> node_concate_monsid_diagnosis.i.input_4
+node_monsid_diagnoser.o.rw6_health >> node_concate_monsid_diagnosis.i.input_5
+node_monsid_diagnoser.o.rw7_health >> node_concate_monsid_diagnosis.i.input_6
+node_monsid_diagnoser.o.rw8_health >> node_concate_monsid_diagnosis.i.input_7
 
 node_concate_monsid_diagnosis.o.concat >> node_viz_monsid_diagnosis.i.scope
 

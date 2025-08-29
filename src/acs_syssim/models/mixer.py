@@ -13,25 +13,41 @@ class ReactionWheelMixerNode(Node):
         axis2_health: InputPort
         axis3_health: InputPort
         axis4_health: InputPort
+        axis5_health: InputPort
+        axis6_health: InputPort
+        axis7_health: InputPort
+        axis8_health: InputPort
 
     class Outputs(NamedTuple):
         wheel1_torque: OutputPort  # Scalar output for wheel 1
         wheel2_torque: OutputPort  # Scalar output for wheel 2
         wheel3_torque: OutputPort  # Scalar output for wheel 3
         wheel4_torque: OutputPort  # Scalar output for wheel 4
+        wheel5_torque: OutputPort  # Scalar output for wheel 5
+        wheel6_torque: OutputPort  # Scalar output for wheel 6
+        wheel7_torque: OutputPort  # Scalar output for wheel 7
+        wheel8_torque: OutputPort  # Scalar output for wheel 8
 
     class Parameters(NamedTuple):
         axis1: NodeParameter
         axis2: NodeParameter
         axis3: NodeParameter
         axis4: NodeParameter
+        axis5: NodeParameter
+        axis6: NodeParameter
+        axis7: NodeParameter
+        axis8: NodeParameter
 
     def __init__(
         self,
         axis1: NDArray = np.array([1, 0, 0]),
-        axis2: NDArray = np.array([0, 1, 0]),
-        axis3: NDArray = np.array([0, 0, 1]),
-        axis4: NDArray = np.array([1, 1, 1]) / np.sqrt(3),
+        axis2: NDArray = np.array([-1, 0, 0]),
+        axis3: NDArray = np.array([0, 1, 0]),
+        axis4: NDArray = np.array([0, -1, 0]),
+        axis5: NDArray = np.array([0, 0, 1]),
+        axis6: NDArray = np.array([0, 0, -1]),
+        axis7: NDArray = np.array([1, 1, 0]),
+        axis8: NDArray = np.array([-1, -1, 0]),
         **kwargs
     ):
         # Define ports
@@ -41,12 +57,20 @@ class ReactionWheelMixerNode(Node):
             InputPort("axis2_health", self),
             InputPort("axis3_health", self),
             InputPort("axis4_health", self),
+            InputPort("axis5_health", self),
+            InputPort("axis6_health", self),
+            InputPort("axis7_health", self),
+            InputPort("axis8_health", self),
         )
         self.output_ports = self.Outputs(
             OutputPort("wheel1_torque", self),
             OutputPort("wheel2_torque", self),
             OutputPort("wheel3_torque", self),
             OutputPort("wheel4_torque", self),
+            OutputPort("wheel5_torque", self),
+            OutputPort("wheel6_torque", self),
+            OutputPort("wheel7_torque", self),
+            OutputPort("wheel8_torque", self),
         )
         # Define parameters (axes)
         self.parameters = self.Parameters(
@@ -54,6 +78,10 @@ class ReactionWheelMixerNode(Node):
             NodeParameter("axis2", axis2),
             NodeParameter("axis3", axis3),
             NodeParameter("axis4", axis4),
+            NodeParameter("axis5", axis5),
+            NodeParameter("axis6", axis6),
+            NodeParameter("axis7", axis7),
+            NodeParameter("axis8", axis8),
         )
         super().__init__(self.input_ports, self.output_ports, self.parameters, **kwargs)
 
@@ -77,14 +105,19 @@ class ReactionWheelMixerNode(Node):
         axis2_health: int = int(self.i.axis2_health.read())
         axis3_health: int = int(self.i.axis3_health.read())
         axis4_health: int = int(self.i.axis4_health.read())
+        axis5_health: int = int(self.i.axis5_health.read())
+        axis6_health: int = int(self.i.axis6_health.read())
+        axis7_health: int = int(self.i.axis7_health.read())
+        axis8_health: int = int(self.i.axis8_health.read())
 
         # Create problem bounds for milp
         bounds = []
-        for z in [axis1_health, axis2_health, axis3_health, axis4_health]:
+        for z in [axis1_health, axis2_health, axis3_health, axis4_health, axis5_health, axis6_health, axis7_health, axis8_health]:
             if z == 0:
                 bounds.append((0, 0))
             else:
                 bounds.append((None, None))
+        bounds += [(0, None)] * 8  # t variables for L1 norm
 
         # Get axes from parameters
         axes = [
@@ -92,30 +125,70 @@ class ReactionWheelMixerNode(Node):
             self.p.axis2.value,
             self.p.axis3.value,
             self.p.axis4.value,
+            self.p.axis5.value,
+            self.p.axis6.value,
+            self.p.axis7.value,
+            self.p.axis8.value,
         ]
 
         axes = [np.array(a) / np.linalg.norm(a) for a in axes]
-        A = np.stack(axes, axis=1)  # 3x4
+        A = np.stack(axes, axis=1)  # 3x8
+
+        # Build augmented LP to minimize sum of absolute values of x (L1):
+        # variables z = [x (8), t (8)]
+        # minimize sum(t)
+        # s.t. A x = commanded_torque
+        #      x - t <= 0
+        #      -x - t <= 0
+        n = 8
+        c = np.concatenate([np.zeros(n), np.ones(n) / n])    # minimize sum(t) / n
+
+        # Equality: A * x + 0 * t = commanded_torque
+        A_eq_aug = np.hstack([A, np.zeros((A.shape[0], n))])
+
+        # Inequalities assembling
+        I = np.eye(n)
+        A_ub = np.vstack([
+            np.hstack([I, -I]),   # x - t <= 0
+            np.hstack([-I, -I]),  # -x - t <= 0  -> -x - t <= 0
+        ])
+        b_ub = np.zeros(2 * n)
 
         res = linprog(
-            c=np.zeros(
-                4
-            ),  # Objective function is zero since we just want to satisfy the constraints
-            A_eq=A,
+            c=c,
+            A_ub=A_ub,
+            b_ub=b_ub,
+            A_eq=A_eq_aug,
             b_eq=commanded_torque,
             bounds=bounds,
             method="highs",
         )
+
+        # res = linprog(
+        #     c=np.zeros(8) / 8,
+        #     A_eq=A,
+        #     b_eq=commanded_torque,
+        #     bounds=bounds,
+        #     method="highs",
+        # )
         if res.success:
             self.o.wheel1_torque.shift_out(res.x[0] * self.p.axis1.value)
             self.o.wheel2_torque.shift_out(res.x[1] * self.p.axis2.value)
             self.o.wheel3_torque.shift_out(res.x[2] * self.p.axis3.value)
             self.o.wheel4_torque.shift_out(res.x[3] * self.p.axis4.value)
+            self.o.wheel5_torque.shift_out(res.x[4] * self.p.axis5.value)
+            self.o.wheel6_torque.shift_out(res.x[5] * self.p.axis6.value)
+            self.o.wheel7_torque.shift_out(res.x[6] * self.p.axis7.value)
+            self.o.wheel8_torque.shift_out(res.x[7] * self.p.axis8.value)
         else:
-            self.o.wheel1_torque.shift_out(0.0)
-            self.o.wheel2_torque.shift_out(0.0)
-            self.o.wheel3_torque.shift_out(0.0)
-            self.o.wheel4_torque.shift_out(0.0)
+            self.o.wheel1_torque.shift_out(np.zeros(3))
+            self.o.wheel2_torque.shift_out(np.zeros(3))
+            self.o.wheel3_torque.shift_out(np.zeros(3))
+            self.o.wheel4_torque.shift_out(np.zeros(3))
+            self.o.wheel5_torque.shift_out(np.zeros(3))
+            self.o.wheel6_torque.shift_out(np.zeros(3))
+            self.o.wheel7_torque.shift_out(np.zeros(3))
+            self.o.wheel8_torque.shift_out(np.zeros(3))
 
 
 class InternalAngularMomentumMuxerNode(Node):
@@ -126,6 +199,10 @@ class InternalAngularMomentumMuxerNode(Node):
         wheel2_speed: InputPort
         wheel3_speed: InputPort
         wheel4_speed: InputPort
+        wheel5_speed: InputPort
+        wheel6_speed: InputPort
+        wheel7_speed: InputPort
+        wheel8_speed: InputPort
 
     class Outputs(NamedTuple):
         angular_momentum: OutputPort  # 3x1 vector output in body frame
@@ -135,6 +212,10 @@ class InternalAngularMomentumMuxerNode(Node):
         inertia2: NodeParameter
         inertia3: NodeParameter
         inertia4: NodeParameter
+        inertia5: NodeParameter
+        inertia6: NodeParameter
+        inertia7: NodeParameter
+        inertia8: NodeParameter
 
     def __init__(
         self,
@@ -142,10 +223,18 @@ class InternalAngularMomentumMuxerNode(Node):
         inertia2: float = 1.0,
         inertia3: float = 1.0,
         inertia4: float = 1.0,
+        inertia5: float = 1.0,
+        inertia6: float = 1.0,
+        inertia7: float = 1.0,
+        inertia8: float = 1.0,
         axis1_vector: NDArray = np.array([1, 0, 0]),
-        axis2_vector: NDArray = np.array([0, 1, 0]),
-        axis3_vector: NDArray = np.array([0, 0, 1]),
-        axis4_vector: NDArray = np.array([1, 1, 1]),
+        axis2_vector: NDArray = np.array([-1, 0, 0]),
+        axis3_vector: NDArray = np.array([0, 1, 0]),
+        axis4_vector: NDArray = np.array([0, -1, 0]),
+        axis5_vector: NDArray = np.array([0, 0, 1]),
+        axis6_vector: NDArray = np.array([0, 0, -1]),
+        axis7_vector: NDArray = np.array([1, 1, 0]),
+        axis8_vector: NDArray = np.array([-1, -1, 0]),
         **kwargs
     ):
         """Initialize the angular momentum estimator node.
@@ -155,12 +244,16 @@ class InternalAngularMomentumMuxerNode(Node):
             inertia2: Inertia moment for wheel 2 [kg*m^2]
             inertia3: Inertia moment for wheel 3 [kg*m^2]
             inertia4: Inertia moment for wheel 4 [kg*m^2]
+            inertia5: Inertia moment for wheel 5 [kg*m^2]
+            inertia6: Inertia moment for wheel 6 [kg*m^2]
             
         Ports:
             wheel1_speed: Speed of wheel 1 [rad/s]
             wheel2_speed: Speed of wheel 2 [rad/s]
             wheel3_speed: Speed of wheel 3 [rad/s]
             wheel4_speed: Speed of wheel 4 [rad/s]
+            wheel5_speed: Speed of wheel 5 [rad/s]
+            wheel6_speed: Speed of wheel 6 [rad/s]
             angular_momentum: Total internal angular momentum vector [Nms]
             
         Config:
@@ -168,6 +261,8 @@ class InternalAngularMomentumMuxerNode(Node):
             axis2_vector: Body frame unit vector for wheel 2 orientation [3x1]
             axis3_vector: Body frame unit vector for wheel 3 orientation [3x1]
             axis4_vector: Body frame unit vector for wheel 4 orientation [3x1]
+            axis5_vector: Body frame unit vector for wheel 5 orientation [3x1]
+            axis6_vector: Body frame unit vector for wheel 6 orientation [3x1]
         """
         # Define ports
         self.input_ports = self.Inputs(
@@ -175,6 +270,10 @@ class InternalAngularMomentumMuxerNode(Node):
             InputPort("wheel2_speed", self),
             InputPort("wheel3_speed", self),
             InputPort("wheel4_speed", self),
+            InputPort("wheel5_speed", self),
+            InputPort("wheel6_speed", self),
+            InputPort("wheel7_speed", self),
+            InputPort("wheel8_speed", self),
         )
         self.output_ports = self.Outputs(
             OutputPort("angular_momentum", self),
@@ -186,6 +285,10 @@ class InternalAngularMomentumMuxerNode(Node):
             NodeParameter("inertia2", inertia2),
             NodeParameter("inertia3", inertia3),
             NodeParameter("inertia4", inertia4),
+            NodeParameter("inertia5", inertia5),
+            NodeParameter("inertia6", inertia6),
+            NodeParameter("inertia7", inertia7),
+            NodeParameter("inertia8", inertia8),
         )
 
         super().__init__(self.input_ports, self.output_ports, self.parameters, **kwargs)
@@ -194,6 +297,10 @@ class InternalAngularMomentumMuxerNode(Node):
         self._axis2 = np.array(self._config.get("axis2_vector", axis2_vector))
         self._axis3 = np.array(self._config.get("axis3_vector", axis3_vector))
         self._axis4 = np.array(self._config.get("axis4_vector", axis4_vector))
+        self._axis5 = np.array(self._config.get("axis5_vector", axis5_vector))
+        self._axis6 = np.array(self._config.get("axis6_vector", axis6_vector))
+        self._axis7 = np.array(self._config.get("axis7_vector", axis7_vector))
+        self._axis8 = np.array(self._config.get("axis8_vector", axis8_vector))
         
 
     def initialize(self):
@@ -202,6 +309,10 @@ class InternalAngularMomentumMuxerNode(Node):
         self._axis2 = self._axis2 / np.linalg.norm(self._axis2)
         self._axis3 = self._axis3 / np.linalg.norm(self._axis3)
         self._axis4 = self._axis4 / np.linalg.norm(self._axis4)
+        self._axis5 = self._axis5 / np.linalg.norm(self._axis5)
+        self._axis6 = self._axis6 / np.linalg.norm(self._axis6)
+        self._axis7 = self._axis7 / np.linalg.norm(self._axis7)
+        self._axis8 = self._axis8 / np.linalg.norm(self._axis8)
 
     @property
     def i(self):
@@ -222,6 +333,10 @@ class InternalAngularMomentumMuxerNode(Node):
         speed2 = self.i.wheel2_speed.read()
         speed3 = self.i.wheel3_speed.read()
         speed4 = self.i.wheel4_speed.read()
+        speed5 = self.i.wheel5_speed.read()
+        speed6 = self.i.wheel6_speed.read()
+        speed7 = self.i.wheel7_speed.read()
+        speed8 = self.i.wheel8_speed.read()
         
         # Handle None inputs (default to zero)
         if speed1 is None:
@@ -232,16 +347,28 @@ class InternalAngularMomentumMuxerNode(Node):
             speed3 = 0.0
         if speed4 is None:
             speed4 = 0.0
+        if speed5 is None:
+            speed5 = 0.0
+        if speed6 is None:
+            speed6 = 0.0
+        if speed7 is None:
+            speed7 = 0.0
+        if speed8 is None:
+            speed8 = 0.0
         
         # Calculate individual wheel angular momentum vectors
         h1 = self.p.inertia1.value * speed1 * self._axis1
         h2 = self.p.inertia2.value * speed2 * self._axis2
         h3 = self.p.inertia3.value * speed3 * self._axis3
         h4 = self.p.inertia4.value * speed4 * self._axis4
+        h5 = self.p.inertia5.value * speed5 * self._axis5
+        h6 = self.p.inertia6.value * speed6 * self._axis6
+        h7 = self.p.inertia7.value * speed7 * self._axis7
+        h8 = self.p.inertia8.value * speed8 * self._axis8
         
         # Sum all wheel angular momentum contributions
-        total_angular_momentum = h1 + h2 + h3 + h4
-        
+        total_angular_momentum = h1 + h2 + h3 + h4 + h5 + h6 + h7 + h8
+
         # Output the total internal angular momentum
         self.o.angular_momentum.shift_out(total_angular_momentum)
 

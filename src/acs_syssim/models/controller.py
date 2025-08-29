@@ -98,7 +98,7 @@ class NodePointingControlSimple(Node):
         # if np.any(w) is None:
         #     w = np.zeros((3,))
 
-        w_e = w_cmd - w
+        w_e = w - w_cmd
 
         mtm_in = self._i.input_mtm_int.read()
         if np.any(mtm_in) == None:
@@ -126,7 +126,7 @@ class NodePointingControlSimple(Node):
         w: np.ndarray,
     ):
 
-        return -self._kp * q_e + self._kd * w_e
+        return -self._kp * q_e - self._kd * w_e + self._skew(w) @ (self._inertia @ w + mtm_int)
 
         # return self._skew(w) @ (self._inertia @ w + mtm_int) + self._inertia @ (
         #     self._kp * q_e + self._ki * integral + self._kd * w_e

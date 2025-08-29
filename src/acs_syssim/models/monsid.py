@@ -18,14 +18,26 @@ class NodeMONSIDDiagnoserInputs(NamedTuple):
     rw2_cmd: InputPort
     rw3_cmd: InputPort
     rw4_cmd: InputPort
+    rw5_cmd: InputPort
+    rw6_cmd: InputPort
+    rw7_cmd: InputPort
+    rw8_cmd: InputPort
     rw1_momentum: InputPort
     rw2_momentum: InputPort
     rw3_momentum: InputPort
     rw4_momentum: InputPort
+    rw5_momentum: InputPort
+    rw6_momentum: InputPort
+    rw7_momentum: InputPort
+    rw8_momentum: InputPort
     enc1: InputPort
     enc2: InputPort
     enc3: InputPort
     enc4: InputPort
+    enc5: InputPort
+    enc6: InputPort
+    enc7: InputPort
+    enc8: InputPort
     imu1: InputPort
     imu2: InputPort
     sru1: InputPort
@@ -36,6 +48,10 @@ class NodeMONSIDDiagnoserOutputs(NamedTuple):
     rw2_health: OutputPort
     rw3_health: OutputPort
     rw4_health: OutputPort
+    rw5_health: OutputPort
+    rw6_health: OutputPort
+    rw7_health: OutputPort
+    rw8_health: OutputPort
     fault_detected: OutputPort
 
 class NodeMONSIDDiagnoser(Node):
@@ -48,14 +64,26 @@ class NodeMONSIDDiagnoser(Node):
             InputPort("RW2Cmd", self),
             InputPort("RW3Cmd", self),
             InputPort("RW4Cmd", self),
+            InputPort("RW5Cmd", self),
+            InputPort("RW6Cmd", self),
+            InputPort("RW7Cmd", self),
+            InputPort("RW8Cmd", self),
             InputPort("RW1Momentum", self),
             InputPort("RW2Momentum", self),
             InputPort("RW3Momentum", self),
             InputPort("RW4Momentum", self),
+            InputPort("RW5Momentum", self),
+            InputPort("RW6Momentum", self),
+            InputPort("RW7Momentum", self),
+            InputPort("RW8Momentum", self),
             InputPort("Enc1", self),
             InputPort("Enc2", self),
             InputPort("Enc3", self),
             InputPort("Enc4", self),
+            InputPort("Enc5", self),
+            InputPort("Enc6", self),
+            InputPort("Enc7", self),
+            InputPort("Enc8", self),
             InputPort("IMU1", self),
             InputPort("IMU2", self),
             InputPort("SRU1", self),
@@ -66,6 +94,10 @@ class NodeMONSIDDiagnoser(Node):
             OutputPort("RW2Health", self),
             OutputPort("RW3Health", self),
             OutputPort("RW4Health", self),
+            OutputPort("RW5Health", self),
+            OutputPort("RW6Health", self),
+            OutputPort("RW7Health", self),
+            OutputPort("RW8Health", self),
             OutputPort("FaultDetected", self),
         )
         self._buffer = deque(maxlen=self._n_buf)  # Ring buffer with automatic size management
@@ -75,7 +107,11 @@ class NodeMONSIDDiagnoser(Node):
             'rw1_cmd': np.array([0.0, 0.0, 0.0]),
             'rw2_cmd': np.array([0.0, 0.0, 0.0]),
             'rw3_cmd': np.array([0.0, 0.0, 0.0]),
-            'rw4_cmd': np.array([0.0, 0.0, 0.0])
+            'rw4_cmd': np.array([0.0, 0.0, 0.0]),
+            'rw5_cmd': np.array([0.0, 0.0, 0.0]),
+            'rw6_cmd': np.array([0.0, 0.0, 0.0]),
+            'rw7_cmd': np.array([0.0, 0.0, 0.0]),
+            'rw8_cmd': np.array([0.0, 0.0, 0.0]),
         }
         self._header = ["time"]
         for ip in self._i:
@@ -113,7 +149,6 @@ class NodeMONSIDDiagnoser(Node):
 
     def update(self, sim_time: float):
         """Update the node. This is called at each simulation step."""
-        pass
         # Read the inputs and store current RW commands for next step
         current_rw_cmds = {}
         row = [f"{sim_time:.10f}"]  # Start with the simulation time
@@ -148,6 +183,10 @@ class NodeMONSIDDiagnoser(Node):
             self.o.rw2_health.shift_out(np.array(True))
             self.o.rw3_health.shift_out(np.array(True))
             self.o.rw4_health.shift_out(np.array(True))
+            self.o.rw5_health.shift_out(np.array(True))
+            self.o.rw6_health.shift_out(np.array(True))
+            self.o.rw7_health.shift_out(np.array(True))
+            self.o.rw8_health.shift_out(np.array(True))
             self.o.fault_detected.shift_out(np.array([]))  # No faults detected yet
             return
         
@@ -194,6 +233,10 @@ class NodeMONSIDDiagnoser(Node):
                 self.o.rw2_health.shift_out(np.array(True))
                 self.o.rw3_health.shift_out(np.array(True))
                 self.o.rw4_health.shift_out(np.array(True))
+                self.o.rw5_health.shift_out(np.array(True))
+                self.o.rw6_health.shift_out(np.array(True))
+                self.o.rw7_health.shift_out(np.array(True))
+                self.o.rw8_health.shift_out(np.array(True))
                 self.o.fault_detected.shift_out(np.array([]))  # No faults detected
                 return
             
@@ -256,6 +299,10 @@ class NodeMONSIDDiagnoser(Node):
             self.o.rw2_health.shift_out(np.array(True) if component_final["IMU_2"]["status"] != "Faulty" else np.array(False))
             self.o.rw3_health.shift_out(np.array(True) if component_final["SRU_1"]["status"] != "Faulty" else np.array(False))
             self.o.rw4_health.shift_out(np.array(True) if component_final["SRU_2"]["status"] != "Faulty" else np.array(False))
+            self.o.rw5_health.shift_out(np.array(True))  # Always healthy for now (no RW5/RW6 in MONSID model yet)
+            self.o.rw6_health.shift_out(np.array(True))  # Always healthy for now (no RW5/RW6 in MONSID model yet)
+            self.o.rw7_health.shift_out(np.array(True))  # Always healthy for now (no RW7 in MONSID model yet)
+            self.o.rw8_health.shift_out(np.array(True))  # Always healthy for now (no RW8 in MONSID model yet)
             self.o.fault_detected.shift_out(np.array(newly_faulty_components))
 
         except subprocess.CalledProcessError as e:
