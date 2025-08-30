@@ -410,8 +410,8 @@ node_monsid_diagnoser.i.rw5_cmd << node_rw_mixer.o.wheel5_torque
 node_monsid_diagnoser.i.rw6_cmd << node_rw_mixer.o.wheel6_torque
 node_monsid_diagnoser.i.rw7_cmd << node_rw_mixer.o.wheel7_torque
 node_monsid_diagnoser.i.rw8_cmd << node_rw_mixer.o.wheel8_torque
-node_monsid_diagnoser.i.dynamics_rate << node_rb.o.output_w_sc
-node_monsid_diagnoser.i.dynamics_orientation << node_rb.o.output_q_sc_to_eci
+node_monsid_diagnoser.i.dynamics_rate << node_estimator.o.est_w
+node_monsid_diagnoser.i.dynamics_orientation << node_estimator.o.est_q
 node_monsid_diagnoser.i.rw1_momentum << node_rwa_1.o.rw_mtm
 node_monsid_diagnoser.i.rw2_momentum << node_rwa_2.o.rw_mtm
 node_monsid_diagnoser.i.rw3_momentum << node_rwa_3.o.rw_mtm
