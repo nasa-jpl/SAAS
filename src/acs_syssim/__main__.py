@@ -163,6 +163,8 @@ node_control = NodePointingControlSimple(config=args.node_config)
 node_control.frequency = 100.0
 node_estimator = NodeKalmanEstimator(
     x0=np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+    wheel_axes=rw_body_axis,
+    wheel_inertias=[0.12e-1] * 8,
     config=args.node_config,
     name="estimator",
 )
@@ -389,6 +391,14 @@ node_estimator.i.sru1_q << node_sru1.o.output_q_sc2eci_measure
 node_estimator.i.imu2_rate << node_imu2.o.output_measure_angular_rate
 node_estimator.i.sru2_q << node_sru2.o.output_q_sc2eci_measure
 node_estimator.i.torque_cmd << node_control.o.output_tau_cmd
+node_estimator.i.encoder_rate_1 << node_encoder1.o.enc_out
+node_estimator.i.encoder_rate_2 << node_encoder2.o.enc_out
+node_estimator.i.encoder_rate_3 << node_encoder3.o.enc_out
+node_estimator.i.encoder_rate_4 << node_encoder4.o.enc_out
+node_estimator.i.encoder_rate_5 << node_encoder5.o.enc_out
+node_estimator.i.encoder_rate_6 << node_encoder6.o.enc_out
+node_estimator.i.encoder_rate_7 << node_encoder7.o.enc_out
+node_estimator.i.encoder_rate_8 << node_encoder8.o.enc_out
 
 node_monsid_diagnoser.i.enc1 << node_encoder1.o.enc_out
 node_monsid_diagnoser.i.enc2 << node_encoder2.o.enc_out
@@ -412,14 +422,14 @@ node_monsid_diagnoser.i.rw7_cmd << node_rw_mixer.o.wheel7_torque
 node_monsid_diagnoser.i.rw8_cmd << node_rw_mixer.o.wheel8_torque
 node_monsid_diagnoser.i.dynamics_rate << node_estimator.o.est_w
 node_monsid_diagnoser.i.dynamics_orientation << node_estimator.o.est_q
-node_monsid_diagnoser.i.rw1_momentum << node_rwa_1.o.rw_mtm
-node_monsid_diagnoser.i.rw2_momentum << node_rwa_2.o.rw_mtm
-node_monsid_diagnoser.i.rw3_momentum << node_rwa_3.o.rw_mtm
-node_monsid_diagnoser.i.rw4_momentum << node_rwa_4.o.rw_mtm
-node_monsid_diagnoser.i.rw5_momentum << node_rwa_5.o.rw_mtm
-node_monsid_diagnoser.i.rw6_momentum << node_rwa_6.o.rw_mtm
-node_monsid_diagnoser.i.rw7_momentum << node_rwa_7.o.rw_mtm
-node_monsid_diagnoser.i.rw8_momentum << node_rwa_8.o.rw_mtm
+node_monsid_diagnoser.i.rw1_momentum << node_estimator.o.est_angmom_1
+node_monsid_diagnoser.i.rw2_momentum << node_estimator.o.est_angmom_2
+node_monsid_diagnoser.i.rw3_momentum << node_estimator.o.est_angmom_3
+node_monsid_diagnoser.i.rw4_momentum << node_estimator.o.est_angmom_4
+node_monsid_diagnoser.i.rw5_momentum << node_estimator.o.est_angmom_5
+node_monsid_diagnoser.i.rw6_momentum << node_estimator.o.est_angmom_6
+node_monsid_diagnoser.i.rw7_momentum << node_estimator.o.est_angmom_7
+node_monsid_diagnoser.i.rw8_momentum << node_estimator.o.est_angmom_8
 
 node_monsid_diagnoser.o.rw1_health >> node_concate_monsid_diagnosis.i.input_0
 node_monsid_diagnoser.o.rw2_health >> node_concate_monsid_diagnosis.i.input_1

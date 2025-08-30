@@ -1,5 +1,5 @@
 import numpy as np
-from typing import NamedTuple
+from typing import NamedTuple, Sequence
 from syssim.core import NodeDifferential, InputPort, OutputPort
 
 
@@ -9,28 +9,89 @@ class NodeKalmanEstimatorInputs(NamedTuple):
     sru1_q: InputPort
     sru2_q: InputPort
     torque_cmd: InputPort
+    # Added encoder scalar inputs (8)
+    encoder_rate_1: InputPort
+    encoder_rate_2: InputPort
+    encoder_rate_3: InputPort
+    encoder_rate_4: InputPort
+    encoder_rate_5: InputPort
+    encoder_rate_6: InputPort
+    encoder_rate_7: InputPort
+    encoder_rate_8: InputPort
 
 
 class NodeKalmanEstimatorOutputs(NamedTuple):
     est_q: OutputPort
     est_w: OutputPort
+    # Added angular momentum vector outputs (8)
+    est_angmom_1: OutputPort
+    est_angmom_2: OutputPort
+    est_angmom_3: OutputPort
+    est_angmom_4: OutputPort
+    est_angmom_5: OutputPort
+    est_angmom_6: OutputPort
+    est_angmom_7: OutputPort
+    est_angmom_8: OutputPort
 
 
 class NodeKalmanEstimator(NodeDifferential):
-    def __init__(self, x0: np.ndarray, **kwargs):
+    # Modified constructor to accept wheel axes and wheel inertias
+    def __init__(
+        self,
+        x0: np.ndarray,
+        wheel_axes: Sequence[np.ndarray] = None,
+        wheel_inertias: Sequence[float] = None,
+        **kwargs,
+    ):
         self._i = NodeKalmanEstimatorInputs(
             InputPort("imu1_rate", self),
             InputPort("imu2_rate", self),
             InputPort("sru1_q", self),
             InputPort("sru2_q", self),
             InputPort("torque_cmd", self),
+            # Encoder inputs
+            InputPort("encoder_rate_1", self),
+            InputPort("encoder_rate_2", self),
+            InputPort("encoder_rate_3", self),
+            InputPort("encoder_rate_4", self),
+            InputPort("encoder_rate_5", self),
+            InputPort("encoder_rate_6", self),
+            InputPort("encoder_rate_7", self),
+            InputPort("encoder_rate_8", self),
         )
         self._o = NodeKalmanEstimatorOutputs(
-            OutputPort("est_q", self), OutputPort("est_w", self)
+            OutputPort("est_q", self),
+            OutputPort("est_w", self),
+            # Angular momentum outputs
+            OutputPort("est_angmom_1", self),
+            OutputPort("est_angmom_2", self),
+            OutputPort("est_angmom_3", self),
+            OutputPort("est_angmom_4", self),
+            OutputPort("est_angmom_5", self),
+            OutputPort("est_angmom_6", self),
+            OutputPort("est_angmom_7", self),
+            OutputPort("est_angmom_8", self),
         )
         # Inertia can be passed as config or default to identity
         self._inertia = kwargs.get("inertia", np.eye(3))
         self._inertia_inv = np.linalg.inv(self._inertia)
+
+        # Wheel axes and inertias (8 wheels)
+        if wheel_axes is None:
+            # default: 8 x-axis unit vectors
+            self._wheel_axes = np.tile(np.array([1.0, 0.0, 0.0]), (8, 1))
+        else:
+            self._wheel_axes = np.asarray(wheel_axes, dtype=float)
+        if wheel_inertias is None:
+            self._wheel_inertias = np.ones(8) * 0.01
+        else:
+            self._wheel_inertias = np.asarray(wheel_inertias, dtype=float)
+
+        # Basic validation (ensure shapes)
+        if self._wheel_axes.shape != (8, 3):
+            raise ValueError("wheel_axes must be sequence of 8 3-element vectors")
+        if self._wheel_inertias.shape != (8,):
+            raise ValueError("wheel_inertias must be sequence of 8 scalars")
 
         super().__init__(x0, self._i, self._o, **kwargs)
 
@@ -65,6 +126,18 @@ class NodeKalmanEstimator(NodeDifferential):
         torque_cmd = self._i.torque_cmd.read()
         if torque_cmd is None:
             torque_cmd = np.zeros(3)
+
+        # Read encoder rates (scalars), default to 0.0
+        enc = []
+        enc.append(self._i.encoder_rate_1.read() or 0.0)
+        enc.append(self._i.encoder_rate_2.read() or 0.0)
+        enc.append(self._i.encoder_rate_3.read() or 0.0)
+        enc.append(self._i.encoder_rate_4.read() or 0.0)
+        enc.append(self._i.encoder_rate_5.read() or 0.0)
+        enc.append(self._i.encoder_rate_6.read() or 0.0)
+        enc.append(self._i.encoder_rate_7.read() or 0.0)
+        enc.append(self._i.encoder_rate_8.read() or 0.0)
+        enc = np.asarray(enc, dtype=float)
 
         # Prediction step
         q = self._x[:4]
@@ -137,6 +210,30 @@ class NodeKalmanEstimator(NodeDifferential):
         # Output the estimated state
         self._o.est_q.shift_out(self._x[:4])
         self._o.est_w.shift_out(self._x[4:])
+
+        # Compute and output angular momentum for each wheel: L = I_w * axis * omega_scalar
+        for i in range(8):
+            axis = self._wheel_axes[i]
+            Iw = self._wheel_inertias[i]
+            omega_scalar = enc[i]
+            L = Iw * axis * omega_scalar  # 3-vector
+            # dispatch to corresponding output port
+            if i == 0:
+                self._o.est_angmom_1.shift_out(L)
+            elif i == 1:
+                self._o.est_angmom_2.shift_out(L)
+            elif i == 2:
+                self._o.est_angmom_3.shift_out(L)
+            elif i == 3:
+                self._o.est_angmom_4.shift_out(L)
+            elif i == 4:
+                self._o.est_angmom_5.shift_out(L)
+            elif i == 5:
+                self._o.est_angmom_6.shift_out(L)
+            elif i == 6:
+                self._o.est_angmom_7.shift_out(L)
+            elif i == 7:
+                self._o.est_angmom_8.shift_out(L)
 
     @property
     def i(self):
