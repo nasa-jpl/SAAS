@@ -1,6 +1,8 @@
 [NodeSCRigidBodyRotationDynamics-1]
 [estimator]
 inertia = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+gyro_noise = 1.24e-4
+sru_noise = 0.000192
 [encoder_1]
 w_noise = 0.000314
 w_bias = 0.0
@@ -58,8 +60,8 @@ rwa_inertia = 0.12e-1
 [rwa_8]
 rwa_inertia = 0.12e-1
 [NodePointingControlSimple-1]
-pointing_kp = 1.0
-pointing_kd = 0.7
+pointing_kp = 0.25
+pointing_kd = 0.4
 pointing_ki = 0.0 #1e-2
 i_mag_limit = 0.1
 i_enable_limit = 0.2

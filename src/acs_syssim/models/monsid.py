@@ -44,14 +44,7 @@ class NodeMONSIDDiagnoserInputs(NamedTuple):
     sru2: InputPort
 
 class NodeMONSIDDiagnoserOutputs(NamedTuple):
-    rw1_health: OutputPort
-    rw2_health: OutputPort
-    rw3_health: OutputPort
-    rw4_health: OutputPort
-    rw5_health: OutputPort
-    rw6_health: OutputPort
-    rw7_health: OutputPort
-    rw8_health: OutputPort
+    health: OutputPort
     fault_detected: OutputPort
 
 class NodeMONSIDDiagnoser(Node):
@@ -90,15 +83,8 @@ class NodeMONSIDDiagnoser(Node):
             InputPort("SRU2", self),
         )
         self._o = NodeMONSIDDiagnoserOutputs(
-            OutputPort("RW1Health", self),
-            OutputPort("RW2Health", self),
-            OutputPort("RW3Health", self),
-            OutputPort("RW4Health", self),
-            OutputPort("RW5Health", self),
-            OutputPort("RW6Health", self),
-            OutputPort("RW7Health", self),
-            OutputPort("RW8Health", self),
             OutputPort("FaultDetected", self),
+            OutputPort("Health", self),
         )
         self._buffer = deque(maxlen=self._n_buf)  # Ring buffer with automatic size management
         self._previous_diagnosis = {}  # Track previous component health status
@@ -113,6 +99,9 @@ class NodeMONSIDDiagnoser(Node):
             'rw7_cmd': np.array([0.0, 0.0, 0.0]),
             'rw8_cmd': np.array([0.0, 0.0, 0.0]),
         }
+
+        # Track when each component was first observed faulty (for debounce)
+        self._fault_start_times: dict[str, float] = {}
         self._header = ["time"]
         for ip in self._i:
             if "SRU" in ip.name or "DynamicsOrientation" in ip.name:
@@ -136,6 +125,9 @@ class NodeMONSIDDiagnoser(Node):
         self._tmp_csv = open(self._tmp_path, 'w', newline='')  # Open the temporary file for writing
         self._writer = csv.writer(self._tmp_csv, lineterminator='\n')
 
+        # Pop fault_hold_time from kwargs if provided (seconds); default 5.0s debounce
+        self._fault_hold_time = float(self._config.get("fault_hold_time", 0.5))
+
         # Check if we have a name and a save dir for this simulation
         # if self._system._sim_name is not None and self._system._save_dir is not None:
         #     self._csv_file_path = f"{self._system._save_dir}/{self._system._sim_name}_monsid_record.csv"
@@ -146,6 +138,31 @@ class NodeMONSIDDiagnoser(Node):
         # self._file_handle = open(self._csv_file_path, mode='w')
         # self._writer = csv.writer(self._file_handle, lineterminator='\n')
         # self._writer.writerow(self._header)
+
+        # Create a default all healthy dict to put out if there is no faults detected
+        self._default_healthy_diagnosis = {
+            'IMU_1': 'Healthy',
+            'IMU_2': 'Healthy',
+            'SRU_1': 'Healthy',
+            'SRU_2': 'Healthy',
+            'EulerDKP': 'Healthy',
+            'RWA_1': 'Healthy',
+            'RWA_2': 'Healthy',
+            'RWA_3': 'Healthy',
+            'RWA_4': 'Healthy',
+            'RWA_5': 'Healthy',
+            'RWA_6': 'Healthy',
+            'RWA_7': 'Healthy',
+            'RWA_8': 'Healthy',
+            'ENC_1': 'Healthy',
+            'ENC_2': 'Healthy',
+            'ENC_3': 'Healthy',
+            'ENC_4': 'Healthy',
+            'ENC_5': 'Healthy',
+            'ENC_6': 'Healthy',
+            'ENC_7': 'Healthy',
+            'ENC_8': 'Healthy',
+        }
 
     def update(self, sim_time: float):
         """Update the node. This is called at each simulation step."""
@@ -179,14 +196,7 @@ class NodeMONSIDDiagnoser(Node):
         
         # Only process if we have enough data to establish state
         if len(self._buffer) < self._n_buf:
-            self.o.rw1_health.shift_out(np.array(True))
-            self.o.rw2_health.shift_out(np.array(True))
-            self.o.rw3_health.shift_out(np.array(True))
-            self.o.rw4_health.shift_out(np.array(True))
-            self.o.rw5_health.shift_out(np.array(True))
-            self.o.rw6_health.shift_out(np.array(True))
-            self.o.rw7_health.shift_out(np.array(True))
-            self.o.rw8_health.shift_out(np.array(True))
+            self.o.health.shift_out(None)
             self.o.fault_detected.shift_out(np.array([]))  # No faults detected yet
             return
         
@@ -229,14 +239,7 @@ class NodeMONSIDDiagnoser(Node):
                     break
             if fault_count == 0:
                 # No faults detected, all components healthy
-                self.o.rw1_health.shift_out(np.array(True))
-                self.o.rw2_health.shift_out(np.array(True))
-                self.o.rw3_health.shift_out(np.array(True))
-                self.o.rw4_health.shift_out(np.array(True))
-                self.o.rw5_health.shift_out(np.array(True))
-                self.o.rw6_health.shift_out(np.array(True))
-                self.o.rw7_health.shift_out(np.array(True))
-                self.o.rw8_health.shift_out(np.array(True))
+                self.o.health.shift_out(self._default_healthy_diagnosis)
                 self.o.fault_detected.shift_out(np.array([]))  # No faults detected
                 return
             
@@ -263,46 +266,65 @@ class NodeMONSIDDiagnoser(Node):
                         comp_match = re.match(r"(\w+) ?: ([\w ]+)\s+\|\s+([\w ]+)\s+\|\s+([\d.]+)", row_clean)
                         if comp_match:
                             component = comp_match.group(1)
-                            status = comp_match.group(2).strip()
-                            suspension_state = comp_match.group(3).strip()
-                            rank = float(comp_match.group(4))
-                            health_data[current_timeslice][component] = {
-                                "status": status,
-                                "suspension_state": suspension_state,
-                                "rank": rank
-                            }
+                            # Only process components with "C__" prefix
+                            if component.startswith("C__"):
+                                # Remove "C__" prefix when storing
+                                component_clean = component[3:]  # Remove first 3 characters
+                                status = comp_match.group(2).strip()
+                                suspension_state = comp_match.group(3).strip()
+                                rank = float(comp_match.group(4))
+                                health_data[current_timeslice][component_clean] = {
+                                    "status": status,
+                                    "suspension_state": suspension_state,
+                                    "rank": rank
+                                }
                         i += 1
                 else:
                     i += 1
 
+            # Build diagnosis result and take the latest timeslice
             diagnosis_result = dict(health_data)
             components = list(diagnosis_result.values())
-
             component_final = components[-1]
 
-            # Track newly detected faults (rising edge detection)
-            newly_faulty_components = []
-            
-            # Check each component for new faults
-            for comp_name, comp_data in component_final.items():
-                is_faulty = comp_data["status"] == "Faulty"
-                was_faulty = self._previous_diagnosis.get(comp_name, False)
-                
-                # Rising edge detection: was healthy, now faulty
-                if is_faulty and not was_faulty:
-                    newly_faulty_components.append(comp_name)
-                
-                # Update previous state
-                self._previous_diagnosis[comp_name] = is_faulty
+            # Raw status map (convert 'Suspect' -> 'Healthy')
+            raw_status = {comp_name: comp_data["status"] for comp_name, comp_data in component_final.items()}
+            for comp_name, status in list(raw_status.items()):
+                if status == "Suspect":
+                    raw_status[comp_name] = "Healthy"
 
-            self.o.rw1_health.shift_out(np.array(True) if component_final["IMU_1"]["status"] != "Faulty" else np.array(False))
-            self.o.rw2_health.shift_out(np.array(True) if component_final["IMU_2"]["status"] != "Faulty" else np.array(False))
-            self.o.rw3_health.shift_out(np.array(True) if component_final["SRU_1"]["status"] != "Faulty" else np.array(False))
-            self.o.rw4_health.shift_out(np.array(True) if component_final["SRU_2"]["status"] != "Faulty" else np.array(False))
-            self.o.rw5_health.shift_out(np.array(True))  # Always healthy for now (no RW5/RW6 in MONSID model yet)
-            self.o.rw6_health.shift_out(np.array(True))  # Always healthy for now (no RW5/RW6 in MONSID model yet)
-            self.o.rw7_health.shift_out(np.array(True))  # Always healthy for now (no RW7 in MONSID model yet)
-            self.o.rw8_health.shift_out(np.array(True))  # Always healthy for now (no RW8 in MONSID model yet)
+            # Apply debounce: only declare a component Faulty if it has been reported as Faulty
+            # continuously for at least self._fault_hold_time seconds.
+            output_status = {}
+            newly_faulty_components = []
+            for comp_name, status in raw_status.items():
+                is_raw_faulty = status == "Faulty"
+                if is_raw_faulty:
+                    # If first time observed faulty, record the time
+                    if comp_name not in self._fault_start_times:
+                        self._fault_start_times[comp_name] = sim_time
+                    # Check if elapsed time exceeds hold time
+                    elapsed = sim_time - self._fault_start_times.get(comp_name, sim_time)
+                    if elapsed >= self._fault_hold_time:
+                        output_status[comp_name] = "Faulty"
+                    else:
+                        output_status[comp_name] = "Healthy"
+                else:
+                    # Clear any start time and mark healthy
+                    if comp_name in self._fault_start_times:
+                        del self._fault_start_times[comp_name]
+                    output_status[comp_name] = "Healthy"
+
+            # Rising edge detection on the debounced output_status
+            for comp_name, out_status in output_status.items():
+                is_faulty_out = out_status == "Faulty"
+                was_faulty = self._previous_diagnosis.get(comp_name, False)
+                if is_faulty_out and not was_faulty:
+                    newly_faulty_components.append(comp_name)
+                # Update previous output state
+                self._previous_diagnosis[comp_name] = is_faulty_out
+
+            self.o.health.shift_out(output_status)
             self.o.fault_detected.shift_out(np.array(newly_faulty_components))
 
         except subprocess.CalledProcessError as e:
@@ -318,7 +340,7 @@ class NodeMONSIDDiagnoser(Node):
             }
             print(f"Error running MONSID: {e}")
 
-    def finalize(self):
+    def finalize(self, fault_history: dict[float, dict[str, bool]] = None):
         """Finalize the node. This is called after the simulation ends."""
         # Close the CSV file
         # self._file_handle.close()
@@ -358,11 +380,7 @@ class NodeFaultPrinter(Node):
             for component_name in fault_list:
                 # Use tqdm.write to print without interfering with progress bars
                 tqdm.write(f"FAULT DETECTED: {component_name} at time {sim_time:.4f}s")
-
-    def finalize(self):
-        """Finalize the node. This is called after the simulation ends."""
-        pass
-
+                
     @property
     def i(self):
         return self._i

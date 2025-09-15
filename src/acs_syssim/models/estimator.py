@@ -9,6 +9,7 @@ class NodeKalmanEstimatorInputs(NamedTuple):
     sru1_q: InputPort
     sru2_q: InputPort
     torque_cmd: InputPort
+    health: InputPort
     # Added encoder scalar inputs (8)
     encoder_rate_1: InputPort
     encoder_rate_2: InputPort
@@ -49,6 +50,7 @@ class NodeKalmanEstimator(NodeDifferential):
             InputPort("sru1_q", self),
             InputPort("sru2_q", self),
             InputPort("torque_cmd", self),
+            InputPort("health", self),
             # Encoder inputs
             InputPort("encoder_rate_1", self),
             InputPort("encoder_rate_2", self),
@@ -98,8 +100,8 @@ class NodeKalmanEstimator(NodeDifferential):
     def initialize(self):
         self._P = np.eye(7) * 0.01
         self._Q = np.eye(7) * 1e-5  # process noise
-        self._R_imu = np.eye(6) * 1e-3
-        self._R_sru = np.eye(8) * 1e-2
+        self._R_imu = np.eye(6) * self._config.get("gyro_noise", 1.24e-4) ** 2
+        self._R_sru = np.eye(8) * self._config.get("sru_noise", 0.000192) ** 2
         if "inertia" in self._config:
             self._inertia = np.array(self._config["inertia"])
             self._inertia_inv = np.linalg.inv(self._inertia)
@@ -139,6 +141,11 @@ class NodeKalmanEstimator(NodeDifferential):
         enc.append(self._i.encoder_rate_8.read() or 0.0)
         enc = np.asarray(enc, dtype=float)
 
+        # Read health status
+        health = self._i.health.read()
+        if health is None:
+            health = {}
+
         # Prediction step
         q = self._x[:4]
         w = self._x[4:]
@@ -161,49 +168,60 @@ class NodeKalmanEstimator(NodeDifferential):
         P_pred = F @ self._P @ F.T + self._Q
 
         # Sequential measurement updates: IMU1, IMU2, SRU1, SRU2
+        x_pred_current = x_pred
+        P_pred_current = P_pred
 
-        # IMU1 update (3x measurement)
-        H_imu1 = self._H[8:11, :]  # rows for imu1 rates
-        z_imu1 = imu1
-        y_imu1 = z_imu1 - (H_imu1 @ x_pred)
-        R_imu1 = self._R_imu[:3, :3]
-        S = H_imu1 @ P_pred @ H_imu1.T + R_imu1
-        K = P_pred @ H_imu1.T @ np.linalg.inv(S)
-        x_pred = x_pred + K @ y_imu1
-        P_pred = (np.eye(7) - K @ H_imu1) @ P_pred
+        # IMU1 update (3x measurement) - only if healthy
+        if health.get("IMU_1", "Healthy") == "Healthy":  # Default to healthy if not specified
+            H_imu1 = self._H[8:11, :]  # rows for imu1 rates
+            z_imu1 = imu1
+            y_imu1 = z_imu1 - (H_imu1 @ x_pred_current)
+            R_imu1 = self._R_imu[:3, :3]
+            S = H_imu1 @ P_pred_current @ H_imu1.T + R_imu1
+            K = P_pred_current @ H_imu1.T @ np.linalg.inv(S)
+            x_pred_current = x_pred_current + K @ y_imu1
+            P_pred_current = (np.eye(7) - K @ H_imu1) @ P_pred_current
 
-        # IMU2 update (3x measurement)
-        H_imu2 = self._H[11:14, :]  # rows for imu2 rates
-        z_imu2 = imu2
-        y_imu2 = z_imu2 - (H_imu2 @ x_pred)
-        R_imu2 = self._R_imu[3:6, 3:6]
-        S = H_imu2 @ P_pred @ H_imu2.T + R_imu2
-        K = P_pred @ H_imu2.T @ np.linalg.inv(S)
-        x_pred = x_pred + K @ y_imu2
-        P_pred = (np.eye(7) - K @ H_imu2) @ P_pred
+        # IMU2 update (3x measurement) - only if healthy
+        if health.get("IMU_2", "Healthy") == "Healthy":  # Default to healthy if not specified
+            H_imu2 = self._H[11:14, :]  # rows for imu2 rates
+            z_imu2 = imu2
+            y_imu2 = z_imu2 - (H_imu2 @ x_pred_current)
+            R_imu2 = self._R_imu[3:6, 3:6]
+            S = H_imu2 @ P_pred_current @ H_imu2.T + R_imu2
+            K = P_pred_current @ H_imu2.T @ np.linalg.inv(S)
+            x_pred_current = x_pred_current + K @ y_imu2
+            P_pred_current = (np.eye(7) - K @ H_imu2) @ P_pred_current
 
-        # SRU1 update (4x measurement)
-        H_sru1 = self._H[0:4, :]  # rows for sru1 quaternion
-        z_sru1 = sru1
-        y_sru1 = z_sru1 - (H_sru1 @ x_pred)
-        R_sru1 = self._R_sru[:4, :4]
-        S = H_sru1 @ P_pred @ H_sru1.T + R_sru1
-        K = P_pred @ H_sru1.T @ np.linalg.inv(S)
-        x_pred = x_pred + K @ y_sru1
-        P_pred = (np.eye(7) - K @ H_sru1) @ P_pred
+        # SRU1 update (4x measurement) - only if healthy
+        if health.get("SRU_1", "Healthy") == "Healthy":  # Default to healthy if not specified
+            H_sru1 = self._H[0:4, :]  # rows for sru1 quaternion
+            z_sru1 = sru1
+            y_sru1 = z_sru1 - (H_sru1 @ x_pred_current)
+            R_sru1 = self._R_sru[:4, :4]
+            S = H_sru1 @ P_pred_current @ H_sru1.T + R_sru1
+            K = P_pred_current @ H_sru1.T @ np.linalg.inv(S)
+            x_pred_current = x_pred_current + K @ y_sru1
+            P_pred_current = (np.eye(7) - K @ H_sru1) @ P_pred_current
 
-        # SRU2 update (4x measurement)
-        H_sru2 = self._H[4:8, :]  # rows for sru2 quaternion
-        z_sru2 = sru2
-        y_sru2 = z_sru2 - (H_sru2 @ x_pred)
-        R_sru2 = self._R_sru[4:8, 4:8]
-        S = H_sru2 @ P_pred @ H_sru2.T + R_sru2
-        K = P_pred @ H_sru2.T @ np.linalg.inv(S)
-        x_final = x_pred + K @ y_sru2
-        P_final = (np.eye(7) - K @ H_sru2) @ P_pred
+        # SRU2 update (4x measurement) - only if healthy
+        if health.get("SRU_2", "Healthy") == "Healthy":  # Default to healthy if not specified
+            H_sru2 = self._H[4:8, :]  # rows for sru2 quaternion
+            z_sru2 = sru2
+            y_sru2 = z_sru2 - (H_sru2 @ x_pred_current)
+            R_sru2 = self._R_sru[4:8, 4:8]
+            S = H_sru2 @ P_pred_current @ H_sru2.T + R_sru2
+            K = P_pred_current @ H_sru2.T @ np.linalg.inv(S)
+            x_final = x_pred_current + K @ y_sru2
+            P_final = (np.eye(7) - K @ H_sru2) @ P_pred_current
+        else:
+            x_final = x_pred_current
+            P_final = P_pred_current
 
-        # Normalize quaternion
+        # Normalize quaternion and make canonical
         x_final[:4] /= np.linalg.norm(x_final[:4])
+        if x_final[0] < 0:
+            x_final[:4] = -x_final[:4]
         self._x = x_final
         self._P = P_final
 

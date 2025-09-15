@@ -1,22 +1,54 @@
-from syssim.core.node import Node, NodeParameter
+from syssim.core.node import Node, NodeParameter, NodeDifferential
 from syssim.core.port import InputPort, OutputPort
 import numpy as np
 from numpy.typing import NDArray
 from typing import NamedTuple
 from scipy.optimize import linprog
+from tqdm import tqdm
+
+
+class DelayNode(NodeDifferential):
+    """A simple delay node that outputs the previous timestep's input."""
+    
+    class Inputs(NamedTuple):
+        input: InputPort
+
+    class Outputs(NamedTuple):
+        output: OutputPort
+
+    def __init__(self, initial_value=None, **kwargs):
+        self.input_ports = self.Inputs(
+            InputPort("input", self),
+        )
+        self.output_ports = self.Outputs(
+            OutputPort("output", self),
+        )
+        self._initial_value = initial_value
+        super().__init__(self._initial_value, self.input_ports, self.output_ports, **kwargs)
+
+    @property
+    def i(self):
+        return self.input_ports
+
+    @property
+    def o(self):
+        return self.output_ports
+
+    def update(self, sim_time: float):
+        """Read input and store as state for next timestep output."""
+        current_input = self.i.input.read()
+        
+        # Output the previous timestep's value (stored in self._x)
+        self.o.output.shift_out(self._x)
+        
+        # Store current input as state for next timestep
+        self._x = current_input
 
 
 class ReactionWheelMixerNode(Node):
     class Inputs(NamedTuple):
         commanded_torque: InputPort
-        axis1_health: InputPort
-        axis2_health: InputPort
-        axis3_health: InputPort
-        axis4_health: InputPort
-        axis5_health: InputPort
-        axis6_health: InputPort
-        axis7_health: InputPort
-        axis8_health: InputPort
+        health: InputPort
 
     class Outputs(NamedTuple):
         wheel1_torque: OutputPort  # Scalar output for wheel 1
@@ -53,14 +85,7 @@ class ReactionWheelMixerNode(Node):
         # Define ports
         self.input_ports = self.Inputs(
             InputPort("commanded_torque", self),
-            InputPort("axis1_health", self),
-            InputPort("axis2_health", self),
-            InputPort("axis3_health", self),
-            InputPort("axis4_health", self),
-            InputPort("axis5_health", self),
-            InputPort("axis6_health", self),
-            InputPort("axis7_health", self),
-            InputPort("axis8_health", self),
+            InputPort("health", self),
         )
         self.output_ports = self.Outputs(
             OutputPort("wheel1_torque", self),
@@ -85,6 +110,10 @@ class ReactionWheelMixerNode(Node):
         )
         super().__init__(self.input_ports, self.output_ports, self.parameters, **kwargs)
 
+        # Track wheels permanently disabled due to any RWA_X/ENC_X detection
+        # store indices 0..7 for wheels 1..8
+        self._disabled_wheels = set()
+
     @property
     def i(self):
         return self.input_ports
@@ -100,22 +129,45 @@ class ReactionWheelMixerNode(Node):
     def update(self, sim_time: float):
         # Get commanded torque from input port
         commanded_torque: NDArray = self.i.commanded_torque.read()
-        # Read wheel faults as int cast from boolean health status
-        axis1_health: int = int(self.i.axis1_health.read())
-        axis2_health: int = int(self.i.axis2_health.read())
-        axis3_health: int = int(self.i.axis3_health.read())
-        axis4_health: int = int(self.i.axis4_health.read())
-        axis5_health: int = int(self.i.axis5_health.read())
-        axis6_health: int = int(self.i.axis6_health.read())
-        axis7_health: int = int(self.i.axis7_health.read())
-        axis8_health: int = int(self.i.axis8_health.read())
+        
+        # Read health dictionary
+        health_dict = self.i.health.read()
+        if health_dict is None:
+            health_dict = {}
+
+        # Update permanent disables: if MONSID/health ever reports RWA_X or ENC_X as not "Healthy",
+        # mark that wheel permanently disabled for remainder of simulation.
+        # (We expect health_dict values like "Healthy" / "Faulty".)
+        for wheel_idx in range(1, 9):
+            rwa_key = f"RWA_{wheel_idx}"
+            enc_key = f"ENC_{wheel_idx}"
+            status_rwa = health_dict.get(rwa_key, None)
+            status_enc = health_dict.get(enc_key, None)
+            if (status_rwa is not None and status_rwa != "Healthy") or (status_enc is not None and status_enc != "Healthy"):
+                # store zero-based index
+                self._disabled_wheels.add(wheel_idx - 1)
+
+        # Check health status for each reaction wheel (RWA_X and ENC_X must both be Healthy)
+        rwa_health = []
+        for i in range(1, 9):  # RWA_1 through RWA_8
+            idx0 = i - 1
+            # If permanently disabled, mark unhealthy regardless of current health
+            if idx0 in self._disabled_wheels:
+                rwa_health.append(0)
+                continue
+            rwa_key = f"RWA_{i}"
+            enc_key = f"ENC_{i}"
+            is_rwa_healthy = health_dict.get(rwa_key, "Healthy") == "Healthy"
+            is_enc_healthy = health_dict.get(enc_key, "Healthy") == "Healthy"
+            is_healthy = is_rwa_healthy and is_enc_healthy
+            rwa_health.append(int(is_healthy))
 
         # Create problem bounds for milp
         bounds = []
-        for z in [axis1_health, axis2_health, axis3_health, axis4_health, axis5_health, axis6_health, axis7_health, axis8_health]:
-            if z == 0:
+        for health_status in rwa_health:
+            if health_status == 0:  # Faulty
                 bounds.append((0, 0))
-            else:
+            else:  # Healthy
                 bounds.append((None, None))
         bounds += [(0, None)] * 8  # t variables for L1 norm
 

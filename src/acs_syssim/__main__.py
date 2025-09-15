@@ -17,14 +17,25 @@ from acs_syssim.models.rwa import NodeRWASimple
 from acs_syssim.models.sixdofsc import NodeSCRigidBodyRotationDynamics
 from acs_syssim.models.monsid import NodeMONSIDDiagnoser, NodeFaultPrinter
 from acs_syssim.models.sru import NodeStellarReferenceUnitSimple
-from acs_syssim.models.fault import DiagonalInertiaPerturbFault
+from acs_syssim.models.fault import (
+    RandomSensorNoise,
+    SensorBiasCreep,
+    ReactionWheelJitter,
+    PeriodicFault,
+    QuaternionRotationNoise,
+    SetUnitQuaternionFault,
+    SensorBiasCreepQuaternion,
+)
 from acs_syssim.models.adder import AdderNode, ConcatNode
 from acs_syssim.models.mixer import (
     ReactionWheelMixerNode,
     InternalAngularMomentumMuxerNode,
+    DelayNode,
 )
 from acs_syssim.models.encoder import NodeWheelEncoder
 from acs_syssim.models.estimator import NodeKalmanEstimator
+from acs_syssim.models.autonomy import AutonomousModeCommander
+from acs_syssim.models.report import Reporter
 
 
 def rigid_body_x0(w_low, w_high):
@@ -43,7 +54,7 @@ def rigid_body_x0(w_low, w_high):
             w * np.cos(theta),
         ]
     )
-    # w_sc = np.zeros(3) 
+    # w_sc = np.zeros(3)
     return np.concatenate([q0, w_sc])
 
 
@@ -76,7 +87,7 @@ config = toml.load(args.node_config)
 
 x0_rb = rigid_body_x0(0.0, 6.0)
 
-# Create body fixed direction vectors for each of six reaction wheels. 
+# Create body fixed direction vectors for each of six reaction wheels.
 rw_body_axis = [
     [0.0, 0.0, 1.0],  # aligned with z-axis
     [(9 / 8) ** 0.5, 0.0, -1 / 3],
@@ -91,7 +102,10 @@ rw_body_axis = [
 
 system = NodeSystem()
 # TODO Move the initialization of the state of this component to the init method of the component.
-node_rb = NodeSCRigidBodyRotationDynamics(x0_rb, config=args.node_config, use_finite_difference=True)
+node_rb = NodeSCRigidBodyRotationDynamics(
+    x0_rb, config=args.node_config, use_finite_difference=True
+)
+node_rb.frequency = 100
 node_imu1 = NodeIMUSimple(config=args.node_config, name="node_imu1")
 node_imu1.frequency = 100
 node_sru1 = NodeStellarReferenceUnitSimple(config=args.node_config, name="node_sru1")
@@ -157,7 +171,8 @@ node_int_ang_momentum_muxer = InternalAngularMomentumMuxerNode(
     axis6_vector=rw_body_axis[5],
     axis7_vector=rw_body_axis[6],
     axis8_vector=rw_body_axis[7],
-    config=args.node_config, name="int_ang_momentum_muxer"
+    config=args.node_config,
+    name="int_ang_momentum_muxer",
 )
 node_control = NodePointingControlSimple(config=args.node_config)
 node_control.frequency = 100.0
@@ -171,33 +186,20 @@ node_estimator = NodeKalmanEstimator(
 node_estimator.frequency = 100.0
 node_rate_cmd = NodeConstant(np.array([0.0, 0.0, 0.0]), config=args.node_config)
 node_quat_cmd = NodeConstant(np.array([1.0, 0.0, 0.0, 0.0]), config=args.node_config)
-node_health1 = NodeConstant(True, config=args.node_config, name="health1")
-node_health2 = NodeConstant(True, config=args.node_config, name="health2")
-node_health3 = NodeConstant(True, config=args.node_config, name="health3")
-node_health4 = NodeConstant(True, config=args.node_config, name="health4")
-node_health5 = NodeConstant(True, config=args.node_config, name="health5")
-node_health6 = NodeConstant(True, config=args.node_config, name="health6")
-node_health7 = NodeConstant(True, config=args.node_config, name="health7")
-node_health8 = NodeConstant(True, config=args.node_config, name="health8")
-node_viz_true_rate = NodeScope(config=args.node_config, name="viz_true_rate")
-node_viz_true_rate.frequency = 100
-node_viz_torque = NodeScope(config=args.node_config, name="viz_torque")
-node_viz_torque.frequency = 100
-node_viz_rate = NodeScope(config=args.node_config, name="viz_imu_rate")
-node_viz_rate.frequency = 100
-node_viz_pointing = NodeScope(config=args.node_config, name="viz_pointing")
-node_viz_pointing.frequency = 100
-node_viz_est_rate = NodeScope(config=args.node_config, name="viz_est_rate")
-node_viz_est_rate.frequency = 100
-node_viz_est_pointing = NodeScope(config=args.node_config, name="viz_est_pointing")
-node_viz_est_pointing.frequency = 100
-node_monsid_diagnoser = NodeMONSIDDiagnoser(config=args.node_config, name="monsid_logger")
+node_monsid_diagnoser = NodeMONSIDDiagnoser(
+    config=args.node_config, name="monsid_logger"
+)
+node_monsid_diagnoser.frequency = 100
 node_torque_adder = AdderNode(8, name="torque_adder")
+# Add a delay node for health signal
+node_health_delay = DelayNode(
+    initial_value={}, config=args.node_config, name="health_delay"
+)
+node_health_delay.frequency = 100
 # Add a fault printer node used for displaying detected faults
 node_fault_printer = NodeFaultPrinter(config=args.node_config, name="fault_printer")
 node_fault_printer.frequency = 100
 node_rw_mixer = ReactionWheelMixerNode(
-
     axis1=np.array(rw_body_axis[0]),
     axis2=np.array(rw_body_axis[1]),
     axis3=np.array(rw_body_axis[2]),
@@ -209,24 +211,75 @@ node_rw_mixer = ReactionWheelMixerNode(
     config=args.node_config,
     name="rw_mixer",
 )
+node_rw_mixer.frequency = 100
 node_internal_mtm_adder = AdderNode(8, name="internal_mtm_adder")
-node_concate_monsid_diagnosis = ConcatNode(8, name="concat_monsid_diagnosis")
-node_viz_monsid_diagnosis = NodeScope(
-    config=args.node_config, name="viz_monsid_diagnosis"
-)
-# New: visualize individual RW torque commands
 node_concat_rw_torques = ConcatNode(8, name="concat_rw_torques")
-node_viz_rw_torque_cmds = NodeScope(config=args.node_config, name="viz_rw_torque_cmds")
-node_viz_rw_torque_cmds.frequency = 100
-# Faults Declaration
-imu_zero = ZeroFault("imu_zero", trigger_time=2.0)
-imu_zero.active = False
-sru_zero = ZeroFault("sru_zero", trigger_time=2.1)
-sru_zero.active = False
-# inertia_fault = DiagonalInertiaPerturbFault(
-#     "inertia_fault",
+# node_viz_true_rate = NodeScope(config=args.node_config, name="viz_true_rate")
+# node_viz_true_rate.frequency = 100
+# node_viz_torque = NodeScope(config=args.node_config, name="viz_torque")
+# node_viz_torque.frequency = 100
+# node_viz_rate = NodeScope(config=args.node_config, name="viz_imu_rate")
+# node_viz_rate.frequency = 100
+# node_viz_pointing = NodeScope(config=args.node_config, name="viz_pointing")
+# node_viz_pointing.frequency = 100
+# node_viz_est_rate = NodeScope(config=args.node_config, name="viz_est_rate")
+# node_viz_est_rate.frequency = 100
+# node_viz_est_pointing = NodeScope(config=args.node_config, name="viz_est_pointing")
+# node_viz_est_pointing.frequency = 100
+# node_viz_monsid_diagnosis = NodeScope(
+#     config=args.node_config, name="viz_monsid_diagnosis"
 # )
-# inertia_fault.active = False
+# node_viz_rw_torque_cmds = NodeScope(config=args.node_config, name="viz_rw_torque_cmds")
+# node_viz_rw_torque_cmds.frequency = 100
+node_autonomy = AutonomousModeCommander(config=args.node_config, name="autonomy")
+node_autonomy.frequency = 100
+node_report = Reporter(config=args.node_config, name="report")
+node_report.frequency = 100
+
+# Faults Declaration
+gyro_1_random_noise = RandomSensorNoise("gyro_1_noise", 1.0, trigger_time=10.0)
+gyro_1_random_noise.active = False
+rw_4_jitter = ReactionWheelJitter("rw_4_jitter", 0.5, jitter_std=0.0, trigger_time=10.0)
+rw_4_jitter.active = False
+sru_1_random_noise = QuaternionRotationNoise(
+    "sru_1_random_noise", 1.0, trigger_time=10.0
+)
+sru_1_random_noise.active = False
+sru_1_unit_quaternion = SetUnitQuaternionFault(
+    "sru_1_unit_quaternion", trigger_time=10.0
+)
+sru_1_unit_quaternion.active = False
+
+# Periodic RandomSensorNoise applied to SRU_2
+sru_2_random_noise = RandomSensorNoise("sru_2_random_noise", 1.0, trigger_time=30.0)
+sru_2_periodic = PeriodicFault(
+    "sru_2_periodic", sru_2_random_noise, period=10.0, phase=0.0, trigger_time=5.0
+)
+sru_2_periodic.active = False
+sru_1_bias_creep_quat = SensorBiasCreepQuaternion(
+    "sru_1_bias_creep_quat",
+    [0.0, 0.0, 0.0],
+    [1e-3, 1e-4, 1e-2],
+    1e-3,
+    trigger_time=20.0,
+)
+sru_1_bias_creep_quat.active = False
+
+
+# Scenario 1: Mutli-fault tolerant: Gryro creep ->  ENC creep -> SRU creep
+scenario_1_enable = True
+gyro_1_bias_creep = SensorBiasCreep(
+    "Gyro 1 Bias Creep", 0.0, 1e-3, 1e-3, trigger_time=10.0
+)
+gyro_1_bias_creep.active = scenario_1_enable
+encoder_4_rand = RandomSensorNoise(
+    "Encoder 4 Random Noise", 10.0, trigger_time=60.0
+)
+encoder_4_rand.active = True
+sru_1_bias_creep = SensorBiasCreep(
+    "SRU 1 Bias Creep", 0.0, 1e-3, 1e-3, trigger_time=90.0
+)
+sru_1_bias_creep.active = scenario_1_enable
 
 system.add_node(node_rb)
 system.add_node(node_imu1)
@@ -257,62 +310,59 @@ system.add_node(node_control)
 system.add_node(node_estimator)
 system.add_node(node_rate_cmd)
 system.add_node(node_quat_cmd)
-system.add_node(node_viz_true_rate)
-system.add_node(node_viz_torque)
-system.add_node(node_viz_rate)
-system.add_node(node_viz_pointing)
-system.add_node(node_viz_est_rate)
-system.add_node(node_viz_est_pointing)
 system.add_node(node_monsid_diagnoser)
-system.add_node(node_health1)
-system.add_node(node_health2)
-system.add_node(node_health3)
-system.add_node(node_health4)
-system.add_node(node_health5)
-system.add_node(node_health6)
-system.add_node(node_health7)
-system.add_node(node_health8)
-system.add_node(node_concate_monsid_diagnosis)
-system.add_node(node_viz_monsid_diagnosis)
+system.add_node(node_health_delay)
 system.add_node(node_fault_printer)
-# Register new nodes
-system.add_node(node_concat_rw_torques)
-system.add_node(node_viz_rw_torque_cmds)
+system.add_node(node_autonomy)
+system.add_node(node_report)
+# system.add_node(node_viz_true_rate)
+# system.add_node(node_viz_torque)
+# system.add_node(node_viz_rate)
+# system.add_node(node_viz_pointing)
+# system.add_node(node_viz_est_rate)
+# system.add_node(node_viz_est_pointing)
+# system.add_node(node_viz_rw_torque_cmds)
 
-system.add_faults([imu_zero, sru_zero])
+if scenario_1_enable:
+    system.add_faults([gyro_1_bias_creep, sru_1_bias_creep, encoder_4_rand])
+
+# system.add_faults(
+#     [
+#         gyro_1_random_noise,
+#         rw_4_jitter,
+#         sru_1_bias_creep,
+#         sru_2_periodic,
+#         sru_1_random_noise,
+#         sru_1_unit_quaternion,
+#         sru_1_bias_creep_quat,
+#         gyro_1_bias_creep,
+#     ]
+# )
 
 # Node connections
 node_rb.o.output_w_sc >> node_imu1.i.input_true_angular_rate
 node_rb.o.output_w_sc >> node_imu2.i.input_true_angular_rate
 
-node_rb.o.output_w_sc >> node_viz_true_rate.i.scope
+# node_rb.o.output_w_sc >> node_viz_true_rate.i.scope
+# node_rb.o.output_q_sc_to_eci >> node_viz_pointing.i.scope
+# node_imu1.o.output_measure_angular_rate >> node_viz_rate.i.scope
+# node_estimator.o.est_w >> node_viz_est_rate.i.scope
+# node_estimator.o.est_q >> node_viz_est_pointing.i.scope
+# node_torque_adder.o.sum >> node_viz_torque.i.scope
+# node_concat_rw_torques.o.concat >> node_viz_rw_torque_cmds.i.scope
 
 node_rb.o.output_q_sc_to_eci >> node_sru1.i.input_q_sc2eci
 node_rb.o.output_q_sc_to_eci >> node_sru2.i.input_q_sc2eci
-node_rb.o.output_q_sc_to_eci >> node_viz_pointing.i.scope
 
 node_estimator.o.est_w >> node_control.i.input_w
 node_estimator.o.est_q >> node_control.i.input_q
-# node_sru1.o.output_q_sc2eci_measure >> node_control.i.input_q
-# node_imu1.o.output_measure_angular_rate >> node_control.i.input_w
-
-node_imu1.o.output_measure_angular_rate >> node_viz_rate.i.scope
-node_estimator.o.est_w >> node_viz_est_rate.i.scope
-node_estimator.o.est_q >> node_viz_est_pointing.i.scope
-
-node_torque_adder.o.sum >> node_viz_torque.i.scope
 
 node_control.o.output_tau_cmd >> node_rw_mixer.i.commanded_torque
 
-# TODO Temporary until I can implement the MONSID health monitor
-node_health1.o.constant_out >> node_rw_mixer.i.axis1_health
-node_health2.o.constant_out >> node_rw_mixer.i.axis2_health
-node_health3.o.constant_out >> node_rw_mixer.i.axis3_health
-node_health4.o.constant_out >> node_rw_mixer.i.axis4_health
-node_health5.o.constant_out >> node_rw_mixer.i.axis5_health
-node_health6.o.constant_out >> node_rw_mixer.i.axis6_health
-node_health7.o.constant_out >> node_rw_mixer.i.axis7_health
-node_health8.o.constant_out >> node_rw_mixer.i.axis8_health
+# Connect health from MONSID through delay to reaction wheel mixer
+node_monsid_diagnoser.o.health >> node_health_delay.i.input
+node_health_delay.o.output >> node_rw_mixer.i.health
+
 
 node_rw_mixer.o.wheel1_torque >> node_rwa_1.i.tau_cmd
 node_rw_mixer.o.wheel2_torque >> node_rwa_2.i.tau_cmd
@@ -332,18 +382,7 @@ node_rw_mixer.o.wheel6_torque >> node_torque_adder.i.input_5
 node_rw_mixer.o.wheel7_torque >> node_torque_adder.i.input_6
 node_rw_mixer.o.wheel8_torque >> node_torque_adder.i.input_7
 
-# Connect each wheel torque to the concat node for visualization
-node_rw_mixer.o.wheel1_torque >> node_concat_rw_torques.i.input_0
-node_rw_mixer.o.wheel2_torque >> node_concat_rw_torques.i.input_1
-node_rw_mixer.o.wheel3_torque >> node_concat_rw_torques.i.input_2
-node_rw_mixer.o.wheel4_torque >> node_concat_rw_torques.i.input_3
-node_rw_mixer.o.wheel5_torque >> node_concat_rw_torques.i.input_4
-node_rw_mixer.o.wheel6_torque >> node_concat_rw_torques.i.input_5
-node_rw_mixer.o.wheel7_torque >> node_concat_rw_torques.i.input_6
-node_rw_mixer.o.wheel8_torque >> node_concat_rw_torques.i.input_7
-
 # Feed concatenated torques to the viz scope
-node_concat_rw_torques.o.concat >> node_viz_rw_torque_cmds.i.scope
 
 node_rwa_1.o.rw_mtm >> node_internal_mtm_adder.i.input_0
 node_rwa_2.o.rw_mtm >> node_internal_mtm_adder.i.input_1
@@ -374,17 +413,8 @@ node_rwa_6.o.rw_speed >> node_encoder6.i.enc_in
 node_rwa_7.o.rw_speed >> node_encoder7.i.enc_in
 node_rwa_8.o.rw_speed >> node_encoder8.i.enc_in
 
-node_rate_cmd.o.constant_out >> node_control.i.input_w_cmd
-node_quat_cmd.o.constant_out >> node_control.i.input_q_cmd
-
 node_torque_adder.o.sum >> node_rb.i.input_tau_external_sc
 node_internal_mtm_adder.o.sum >> node_rb.i.input_mtm_internal_sc
-
-# node_monsid_logger.i.cmd_torque << node_control.o.output_tau_cmd
-# node_monsid_logger.i.sens_rate << node_rb.o.output_w_sc
-
-# node_monsid_logger.i.sens_imu_rate << node_imu1.o.output_measure_angular_rate
-# node_monsid_logger.i.sens_q_sc_to_eci << node_sru1.o.output_q_sc2eci_measure
 
 node_estimator.i.imu1_rate << node_imu1.o.output_measure_angular_rate
 node_estimator.i.sru1_q << node_sru1.o.output_q_sc2eci_measure
@@ -399,6 +429,7 @@ node_estimator.i.encoder_rate_5 << node_encoder5.o.enc_out
 node_estimator.i.encoder_rate_6 << node_encoder6.o.enc_out
 node_estimator.i.encoder_rate_7 << node_encoder7.o.enc_out
 node_estimator.i.encoder_rate_8 << node_encoder8.o.enc_out
+node_estimator.i.health << node_monsid_diagnoser.o.health
 
 node_monsid_diagnoser.i.enc1 << node_encoder1.o.enc_out
 node_monsid_diagnoser.i.enc2 << node_encoder2.o.enc_out
@@ -420,6 +451,7 @@ node_monsid_diagnoser.i.rw5_cmd << node_rw_mixer.o.wheel5_torque
 node_monsid_diagnoser.i.rw6_cmd << node_rw_mixer.o.wheel6_torque
 node_monsid_diagnoser.i.rw7_cmd << node_rw_mixer.o.wheel7_torque
 node_monsid_diagnoser.i.rw8_cmd << node_rw_mixer.o.wheel8_torque
+
 node_monsid_diagnoser.i.dynamics_rate << node_estimator.o.est_w
 node_monsid_diagnoser.i.dynamics_orientation << node_estimator.o.est_q
 node_monsid_diagnoser.i.rw1_momentum << node_estimator.o.est_angmom_1
@@ -431,22 +463,50 @@ node_monsid_diagnoser.i.rw6_momentum << node_estimator.o.est_angmom_6
 node_monsid_diagnoser.i.rw7_momentum << node_estimator.o.est_angmom_7
 node_monsid_diagnoser.i.rw8_momentum << node_estimator.o.est_angmom_8
 
-node_monsid_diagnoser.o.rw1_health >> node_concate_monsid_diagnosis.i.input_0
-node_monsid_diagnoser.o.rw2_health >> node_concate_monsid_diagnosis.i.input_1
-node_monsid_diagnoser.o.rw3_health >> node_concate_monsid_diagnosis.i.input_2
-node_monsid_diagnoser.o.rw4_health >> node_concate_monsid_diagnosis.i.input_3
-node_monsid_diagnoser.o.rw5_health >> node_concate_monsid_diagnosis.i.input_4
-node_monsid_diagnoser.o.rw6_health >> node_concate_monsid_diagnosis.i.input_5
-node_monsid_diagnoser.o.rw7_health >> node_concate_monsid_diagnosis.i.input_6
-node_monsid_diagnoser.o.rw8_health >> node_concate_monsid_diagnosis.i.input_7
-
-node_concate_monsid_diagnosis.o.concat >> node_viz_monsid_diagnosis.i.scope
 
 node_fault_printer.i.fault_detected << node_monsid_diagnoser.o.fault_detected
 
+node_autonomy.i.health << node_monsid_diagnoser.o.health
+node_autonomy.i.est_q << node_estimator.o.est_q
+
+node_report.i.health << node_monsid_diagnoser.o.health
+node_report.i.q_est << node_estimator.o.est_q
+node_report.i.q_true << node_rb.o.output_q_sc_to_eci
+node_report.i.w_est << node_estimator.o.est_w
+node_report.i.w_true << node_rb.o.output_w_sc
+node_report.i.rw1_cmd << node_rw_mixer.o.wheel1_torque
+node_report.i.rw2_cmd << node_rw_mixer.o.wheel2_torque
+node_report.i.rw3_cmd << node_rw_mixer.o.wheel3_torque
+node_report.i.rw4_cmd << node_rw_mixer.o.wheel4_torque
+node_report.i.rw5_cmd << node_rw_mixer.o.wheel5_torque
+node_report.i.rw6_cmd << node_rw_mixer.o.wheel6_torque
+node_report.i.rw7_cmd << node_rw_mixer.o.wheel7_torque
+node_report.i.rw8_cmd << node_rw_mixer.o.wheel8_torque
+node_report.i.torque_cmd << node_control.o.output_tau_cmd
+node_report.i.mode << node_autonomy.o.output_mode
+
+# node_rate_cmd.o.constant_out >> node_control.i.input_w_cmd
+# node_quat_cmd.o.constant_out >> node_control.i.input_q_cmd
+# node_report.i.q_cmd << node_quat_cmd.o.constant_out
+# node_report.i.w_cmd << node_rate_cmd.o.constant_out
+
+node_autonomy.o.output_q_cmd >> node_control.i.input_q_cmd
+node_autonomy.o.output_w_cmd >> node_control.i.input_w_cmd
+node_report.i.q_cmd << node_autonomy.o.output_q_cmd
+node_report.i.w_cmd << node_autonomy.o.output_w_cmd
+
 # Port fault registration
-node_imu1.o.output_measure_angular_rate.add_fault(imu_zero)
-node_sru1.o.output_q_sc2eci_measure.add_fault(sru_zero)
+if scenario_1_enable:
+    node_imu1.o.output_measure_angular_rate.add_fault(gyro_1_bias_creep)
+    node_sru1.o.output_q_sc2eci_measure.add_fault(sru_1_bias_creep)
+    node_encoder4.o.enc_out.add_fault(encoder_4_rand)
+
+    # node_sru1.o.output_q_sc2eci_measure.add_fault(sru_1_bias_creep_quat)
+# node_imu1.o.output_measure_angular_rate.add_fault(gyro_1_random_noise)
+# node_sru1.o.output_q_sc2eci_measure.add_fault(sru_1_random_noise)
+# node_sru1.o.output_q_sc2eci_measure.add_fault(sru_1_unit_quaternion)
+# node_sru2.o.output_q_sc2eci_measure.add_fault(sru_2_periodic)
+# node_rwa_4.i.tau_cmd.add_fault(rw_4_jitter)
 
 # Param fault registration
 # node_rb.p.inertia_moment.add_fault(inertia_fault)
@@ -459,6 +519,7 @@ system.simulate(
     save_dir=None,
     sim_name=None,
 )
+
 
 def main():
     pass
