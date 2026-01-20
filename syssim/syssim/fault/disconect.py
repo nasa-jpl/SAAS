@@ -45,12 +45,14 @@ class ZeroFault(Fault):
 
     def action(self, value: any):
         """Set the output to zero after the trigger time."""
-        
-        # Check that the type is a NDArray
-        assert isinstance(value, np.ndarray), "Value must be a numpy ndarray."
         if self._triggered:
-            return np.zeros_like(value)  # Return zero array to indicate fault
-        return value  # Return the original value if not in fault state
+            if isinstance(value, np.ndarray):
+                return np.zeros_like(value)
+            elif isinstance(value, (float, int)):
+                return 0.0
+            else:
+                raise TypeError("Value must be a numpy ndarray or a float/int.")
+        return value
     
     def update(self, time):
         if time >= self._trigger_time and not self._triggered:

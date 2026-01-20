@@ -6,18 +6,20 @@ from syssim.core.port import InputPort, OutputPort
 class Fault(ABC):
     """Abstract base class for faults in the system. All faults should inherit from this class and implement the required methods."""
 
-    def __init__(self, name: str):
-        """Initialize the fault with a name.
+    def __init__(self, name: str, trigger_time: float = 0.0):
+        """Initialize the fault with a name and trigger time.
 
         Args:
             name (str): Name of the fault.
-            port (Union[InputPort, OutputPort]): The port associated with the fault. This can be either an InputPort or an OutputPort.
+            trigger_time (float): Time at which the fault becomes active.
         """
         assert isinstance(name, str), "Fault name must be a string."
 
         self._name = name
         self._port: InputPort | OutputPort | None = None
         self._active = True
+        self._trigger_time = float(trigger_time)
+        self._triggered = False
 
     @abstractmethod
     def action(self, value: Any) -> Any:
@@ -30,7 +32,8 @@ class Fault(ABC):
 
     def update(self, time: float):
         """Update the fault state based on the current simulation time."""
-        pass
+        if not self._triggered and time >= self._trigger_time:
+            self._triggered = True
 
     @property
     def name(self) -> str:
@@ -88,3 +91,21 @@ class Fault(ABC):
         """
         assert isinstance(value, bool), "Active state must be a boolean."
         self._active = value
+
+    @property
+    def triggered(self) -> bool:
+        """Check if the fault has been triggered (reached its trigger time).
+
+        Returns:
+            bool: True if the fault has been triggered, False otherwise.
+        """
+        return self._triggered
+
+    @property
+    def trigger_time(self) -> float:
+        """Get the trigger time of the fault.
+
+        Returns:
+            float: The trigger time of the fault.
+        """
+        return self._trigger_time

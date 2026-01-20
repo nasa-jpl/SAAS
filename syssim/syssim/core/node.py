@@ -136,8 +136,13 @@ class Node(ABC):
         """Method stub for initializing the node at the start of a simulation. All initialization actions should be done here when subclassing the node. This ensures that the node will be properlly reset in simulations that run multiple batches."""
         pass
 
-    def finalize(self):
-        """Method stub for finalizing the node. This is a good place to perform one-shot tasks or analysis of data collected by the node. For instance, one could display a plot from this method."""
+    def finalize(self, fault_history: Dict[float, Dict[str, bool]] = None):
+        """Finalize the node. This is called after the simulation ends.
+
+        Args:
+            fault_history: Dictionary mapping simulation time to fault name->active status
+        """
+        self._fault_history = fault_history or {}
         pass
 
     def update(self, sim_time: float):
@@ -273,6 +278,6 @@ class NodeDifferential(Node):
         # Differential blocks have no dependencies...
         return list()
 
-    def finalize(self):
+    def finalize(self, fault_history: Dict[float, Dict[str, bool]] = None):
         self._x = deepcopy(self._x0)
-        return super().finalize()
+        return super().finalize(fault_history)

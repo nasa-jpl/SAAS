@@ -30,9 +30,10 @@ class NodeScope(Node):
         super().__init__(self._i, None, **kwargs)
 
     def initialize(self):
-        self._title = self._config["title"]
-        self._xlabel = self._config["xlabel"]
-        self._ylabel = self._config["ylabel"]
+        self._title = self._config.get("title", "Scope")
+        self._xlabel = self._config.get("xlabel", "Time")
+        self._ylabel = self._config.get("ylabel", "Value")
+        self._legend = self._config.get("legend", [])
         self._show = self._config.get("show", True)
         self._save = self._config.get("save", False)
 
@@ -47,6 +48,7 @@ class NodeScope(Node):
         plt.ylabel(self._ylabel)
         plt.title(self._title)
         plt.grid(True)
+        plt.legend(self._legend)
 
         if self._save:
             if self._system.get_output_dir() is not None:

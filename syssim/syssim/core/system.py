@@ -20,6 +20,7 @@ class NodeSystem:
         self._nodes: List[Node] = list()
         self._faults : List[Fault] = list()
         self._detected_faults = list()
+        self._fault_history: Dict[float, Dict[str, bool]] = {}  # Track fault status over time
 
     def __repr__(self):
         output = ""
@@ -141,6 +142,14 @@ class NodeSystem:
         else:
             return None
 
+    def get_fault_history(self) -> Dict[float, Dict[str, bool]]:
+        """Get the complete history of fault activation status over simulation time.
+        
+        Returns:
+            Dict[float, Dict[str, bool]]: Dictionary mapping time to fault name->active status
+        """
+        return self._fault_history.copy()
+
     def simulate(
         self, t_f: float, dt=0.01, save_dir=None, sim_name=None, batches: int = 1
     ):
@@ -188,6 +197,7 @@ class NodeSystem:
         self._sim_start_time = datetime.now()
         self._save_dir = save_dir
         self._sim_name = sim_name
+        self._fault_history.clear()  # Reset fault history for new simulation
 
         if self.get_output_dir() != None:
             if not path.exists(self.get_output_dir()):
@@ -216,15 +226,21 @@ class NodeSystem:
             for f in self._faults:
                 f.update(st)
 
+            # Record fault status at this timestep
+            fault_status = {}
+            for f in self._faults:
+                fault_status[f.name] = f.triggered and f.active
+            self._fault_history[st] = fault_status
+
             # Get all times and nodes to update at each time
             for n in self._ex_plan:
                 if n in ns:
                     # If the node should be updated at this time, update it.
                     n.update(st)
 
-        # Finalize all blocks
+        # Finalize all blocks with fault history
         for n in self._nodes:
-            n.finalize()
+            n.finalize(fault_history=self._fault_history)
 
         self._detected_faults.clear()
 
