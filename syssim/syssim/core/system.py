@@ -15,7 +15,16 @@ from syssim.core.fault import Fault
 
 class NodeSystem:
     def __init__(self):
-        """Represents a system that can be simulated. The system is made up of nodes and the connections between their ports, which in turn dictate how data flows thorugh the simulation. Think MATLAB Simulink."""
+        """Simulatable collection of nodes connected by ports.
+
+        The system owns all nodes, computes an execution order by topological
+        sort, evaluates faults, and iterates the simulation timeline.
+
+        Notes
+        -----
+        This class is analogous to a Simulink diagram: add nodes, connect
+        their ports, register faults, then call :meth:`simulate`.
+        """
         self._ex_plan: List[Node] = None
         self._nodes: List[Node] = list()
         self._faults : List[Fault] = list()
@@ -34,13 +43,17 @@ class NodeSystem:
         return output
 
     def add_node(self, n: Node):
-        """Register a node into the system.
+        """Register a node with the system.
 
-        Args:
-            n (Node): node to register
+        Parameters
+        ----------
+        n : Node
+            Node instance to register.
 
-        Raises:
-            Exception: Raised if the node has already been added to the system
+        Raises
+        ------
+        Exception
+            If a node with the same name already exists in the system.
         """
         names = [n.name for n in self._nodes]
         if n.name == None:
@@ -60,10 +73,17 @@ class NodeSystem:
         n._system = self
 
     def add_faults(self, fault : Union[Fault, List[Fault]]):
-        """Register a set of faults into the simulation. The nodes and ports to which the faults are assigned must already have been added to the system.
+        """Register one or more faults.
 
-        Args:
-            fault (Union[Fault, List[Fault]]): Fault or list of faults to register. The faults must already have been assigned to a node param or port.
+        Parameters
+        ----------
+        fault : Fault or list of Fault
+            Faults that have already been attached to a port or parameter.
+
+        Raises
+        ------
+        Exception
+            If a provided object is not an instance of :class:`Fault`.
         """
         if isinstance(fault, Fault):
             self._faults.append(fault)
@@ -77,22 +97,29 @@ class NodeSystem:
                     )
 
     def detect_fault(self, name: str, time: float):
-        """Register a detection of a fault with the system. Used to allow plotting them later.
+        """Record a detected fault event.
 
-        Args:
-            name (str): name of the fault that we think we detected
-            time (float): time we think we detected it
+        Parameters
+        ----------
+        name : str
+            Name of the detected fault.
+        time : float
+            Simulation time of the detection.
         """
         self._detected_faults.append((name, time))
 
     def get_node(self, node_name: str) -> Node:
-        """Get a node in the system by name
+        """Return a node by name.
 
-        Args:
-            node_name (str): name of the node
+        Parameters
+        ----------
+        node_name : str
+            Name of the node.
 
-        Returns:
-            Node: requested node
+        Returns
+        -------
+        Node
+            Matching node or ``None`` if not present.
         """
         for n in self._nodes:
             if n.name == node_name:
@@ -110,26 +137,33 @@ class NodeSystem:
     #     return self._faults[node]
 
     def get_fault_detections(self) -> List[Tuple[str, float]]:
-        """Get all the faults we think we have detected
+        """Return all fault detections.
 
-        Returns:
-            List[Tuple[str, float]]: list of fault detections
+        Returns
+        -------
+        list of tuple
+            Pairs of fault name and detection time.
         """
         return self._detected_faults
 
     def get_faults(self) -> List:
-        """Get all the faults registered in this system
+        """Return registered faults.
 
-        Returns:
-            List: list of faults
+        Returns
+        -------
+        list of Fault
+            Faults attached to the system.
         """
         return self._faults
 
     def get_output_dir(self) -> str:
-        """Get the directory in which we should store results for this simulation of this system
+        """Directory path for simulation outputs.
 
-        Returns:
-            str: directory to store results
+        Returns
+        -------
+        str or None
+            Full path to the run-specific output directory, or ``None`` if not
+            set.
         """
         if (
             self._sim_name != None
@@ -143,24 +177,34 @@ class NodeSystem:
             return None
 
     def get_fault_history(self) -> Dict[float, Dict[str, bool]]:
-        """Get the complete history of fault activation status over simulation time.
-        
-        Returns:
-            Dict[float, Dict[str, bool]]: Dictionary mapping time to fault name->active status
+        """Return the recorded fault activation timeline.
+
+        Returns
+        -------
+        dict
+            Mapping from simulation time to ``{fault_name: active}``.
         """
         return self._fault_history.copy()
 
     def simulate(
         self, t_f: float, dt=0.01, save_dir=None, sim_name=None, batches: int = 1
     ):
-        """Simulate the system. All nodes are reinitialized between simulation batches and all realizations of fault statistics are rerandomized.
+        """Run one or more simulation batches.
 
-        Args:
-            t_f (float): final time of the simulation
-            dt (float, optional): The default node period to use. Any node that has not has its period of frequency explicitly set will use this value. Defaults to 0.01.
-            save_dir (str, optional): directory in which to save results. Defaults to None.
-            sim_name (str, optional): name to use for this simulation. Used to construct the save directory. Defaults to None.
-            batches (int, optional): How many simulation batches to run. Defaults to 1.
+        Parameters
+        ----------
+        t_f : float
+            Final simulation time (exclusive).
+        dt : float, optional
+            Default node period when not explicitly set on a node, by default
+            0.01.
+        save_dir : str, optional
+            Directory where results (plots, artifacts) should be saved.
+        sim_name : str, optional
+            Name of the simulation run, used to build the output directory.
+        batches : int, optional
+            Number of realizations to run. Each batch reinitializes nodes and
+            re-randomizes fault statistics.
         """
         if batches == 1:
             self._simulation_iterate(t_f, dt, save_dir, sim_name)
@@ -169,13 +213,17 @@ class NodeSystem:
                 self._simulation_iterate(t_f, dt, save_dir, sim_name)
 
     def compile(self) -> List[Node]:
-        """Build an execution order for nodes in the system using topological sort.
+        """Topologically sort nodes to obtain an execution order.
 
-        Raises:
-            Exception: If the system contains a topological cycle (also called an "algebraic loop" and cannot be solved.
+        Returns
+        -------
+        list of Node
+            Nodes in the order they should be executed.
 
-        Returns:
-            List[Node]: A topological ordering of nodes
+        Raises
+        ------
+        Exception
+            If the graph contains a cycle (algebraic loop).
         """
         dg = self._build_dependency_graph()
         try:
@@ -186,13 +234,18 @@ class NodeSystem:
         return [dg[i] for i in reversed(topo_i)]
 
     def _simulation_iterate(self, t_f: float, dt: float, save_dir: str, sim_name: str):
-        """Run one simualtion of the system
+        """Run a single realization of the system.
 
-        Args:
-            t_f (float): final simulation time
-            dt (float): default simulation step
-            save_dir (str): directory to save outputs
-            sim_name (str): simulation name
+        Parameters
+        ----------
+        t_f : float
+            Final simulation time.
+        dt : float
+            Default simulation step.
+        save_dir : str
+            Output directory for artifacts.
+        sim_name : str
+            Simulation name for directory construction.
         """
         self._sim_start_time = datetime.now()
         self._save_dir = save_dir
@@ -245,10 +298,13 @@ class NodeSystem:
         self._detected_faults.clear()
 
     def _build_dependency_graph(self) -> rwx.PyDAG:
-        """Build a graph encoding the dependencies between nodes in this system.
+        """Build a dependency graph for the current nodes.
 
-        Returns:
-            PyDAG: rustworkx directed acyclic graph
+        Returns
+        -------
+        rustworkx.PyDAG
+            DAG with nodes corresponding to simulation nodes and edges pointing
+            from dependents to dependencies.
         """
         dg = rwx.PyDAG()
         ndinx = dg.add_nodes_from(self._nodes)
@@ -260,13 +316,17 @@ class NodeSystem:
         return dg
 
     def _build_schedule(self, tf: float) -> Dict[float, List[Node]]:
-        """Build a dictionary that maps from simulation time to a list of nodes that must be updated at that time.
+        """Construct the simulation schedule.
 
-        Args:
-            tf (float): final time of the simulation
+        Parameters
+        ----------
+        tf : float
+            Final time (exclusive).
 
-        Returns:
-            Dict[float, List[Node]]: the schedule for the simulation
+        Returns
+        -------
+        dict
+            Mapping time step to list of nodes scheduled for update.
         """
         sched = {}
         for n in self._nodes:

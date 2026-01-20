@@ -22,16 +22,23 @@ class NodeStateSpaceOutputs(NamedTuple):
 class NodeStateSpace(NodeDifferential):
 
     def __init__(self, a: np.ndarray, b: np.ndarray, c: np.ndarray, x0: np.ndarray, **kwargs):
-        """Implements an LTI system. Note that there is no D matrix because in the current system simulation framework, the output of a NodeDifferential cannot rely on the input at the current time step.
+        """Linear time-invariant state-space node without feedthrough.
 
-        Args:
-            a (np.ndarray): System A matrix
-            b (np.ndarray): System B matrix
-            c (np.ndarray): System C matrix
-            x0 (np.ndarray): Initial state
-        Ports:
-            input_u (np.array) input to the system
-            output_y (np.array) output of the system            
+        Parameters
+        ----------
+        a : np.ndarray
+            State transition matrix.
+        b : np.ndarray
+            Input matrix.
+        c : np.ndarray
+            Output matrix.
+        x0 : np.ndarray
+            Initial state vector.
+
+        Notes
+        -----
+        ``D`` is omitted because :class:`NodeDifferential` forbids dependence
+        on the current-time input during output computation.
         """
         self._a = a
         self._b = b

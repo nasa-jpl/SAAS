@@ -5,14 +5,22 @@ from syssim.core import Node, InputPort, OutputPort
 
 class FaultBasic:
     def __init__(self, spec: Dict, node: Node, port: Union[InputPort, OutputPort]):
-        """A basic fault that can be constructed from a definition given in a TOML file. Allows the fault to occur at a random time and for a random duration with a given probability. Can either hold, randomize, or disconnect port values.
+        """Fault defined from TOML-style specification.
 
-        Args:
-            spec (Dict): dictionary of key value pairs derived from a markup language like TOML which specifies the definition of this fault
-            node (Node): the node the fault will occur on
-            port (Union[InputPort, OutputPort]): the port the fault will occur on
+        Parameters
+        ----------
+        spec : dict
+            Parsed fault specification. See README for field schema.
+        node : Node
+            Node owning the port to fault.
+        port : InputPort or OutputPort
+            Port that will be mutated while the fault is active.
 
-        Basic faults are defined using the TOML specification laid out in the README.md file in the same directory as this file.
+        Notes
+        -----
+        Fault parameters (start time, duration, occurrence, action type, and
+        indices) support both fixed values and random draws per simulation
+        batch.
         """
         self._spec = spec
         self._node = node
@@ -30,7 +38,7 @@ class FaultBasic:
             return f"Basic Fault [{self._name}]:\n\tNode = {self._node.name}\n\tPort = {self._port.name}\n\tDoes not occur"
 
     def _setup_parameters(self):
-        """Setup the parameters of the class given its spec"""
+        """Setup the parameters of the class given its spec."""
         if "t" in self._spec["start-time"].keys():
             self._t = lambda: self._spec["start-time"]["t"]
         elif "gaussian" in self._spec["start-time"].keys():
@@ -62,55 +70,31 @@ class FaultBasic:
         )
 
     def _gen_state(self):
-        """Generate the state of fault. Includes randomizing all random values."""
+        """Generate fault realization for the current batch."""
         self._state = (self._t(), self._dt(), self._p())
 
     def start_time(self) -> float:
-        """Get the start tie of the fault
-
-        Returns:
-            float: start time
-        """
+        """Start time for this realization."""
         return self._state[0]
 
     def duration(self) -> float:
-        """Get the duration of the fault
-
-        Returns:
-            float: the duration
-        """
+        """Duration for this realization."""
         return self._state[1]
 
     def is_occuring(self) -> bool:
-        """Get if the fault will occur in the current realization
-
-        Returns:
-            bool: is the fault occuring
-        """
+        """Whether the fault occurs in the current realization."""
         return self._state[2]
 
     def is_active(self) -> bool:
-        """Get if the fault is occuring now
-
-        Returns:
-            bool: is the fault active now
-        """
+        """Whether the fault is active at the current simulation time."""
         return self._is_active
 
     def get_name(self) -> str:
-        """Get the name of the fault
-
-        Returns:
-            str: name
-        """
+        """Return the fault name."""
         return self._name
 
     def update(self, sim_time: float):
-        """Update the fault to see if it should be activated
-
-        Args:
-            sim_time (float): current simulation time
-        """
+        """Update activation state based on simulation time."""
         if sim_time >= self.start_time() and sim_time < (
             self.start_time() + self.duration()
         ):
@@ -120,11 +104,7 @@ class FaultBasic:
             self._is_active = False
 
     def action(self, v: np.ndarray):
-        """Apply the fault action to the port it affects
-
-        Args:
-            v (np.ndarray): the value from the port to mutate
-        """
+        """Apply the configured mutation to the provided value."""
         action_type = self._spec["action"]["type"]
 
         if (

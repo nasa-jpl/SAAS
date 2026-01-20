@@ -6,18 +6,21 @@ class DisconnectFault(Fault):
     """Fault that simulates a disconnection in the system."""
 
     def __init__(self, name: str, trigger_time: float = 0.0):
-        """Initialize the disconnect fault with a name and port.
+        """Create a disconnection fault.
 
-        Args:
-            name (str): Name of the fault.
-            port: The port associated with the fault.
+        Parameters
+        ----------
+        name : str
+            Fault name.
+        trigger_time : float, optional
+            Time when the disconnection begins.
         """
         super().__init__(name)
         self._trigger_time = trigger_time
         self._triggered = False
 
     def action(self, value: any):
-        """Simulate the disconnection by setting the port to None."""
+        """Simulate disconnection by returning NaN-filled arrays."""
         
         # Check that the type is a NDArray
         assert isinstance(value, np.ndarray), "Value must be a numpy ndarray."
@@ -26,18 +29,21 @@ class DisconnectFault(Fault):
         return value  # Return the original value if not disconnected
     
     def update(self, time):
-        """Update the fault state based on the current simulation time."""
+        """Update fault state based on the current simulation time."""
         if time >= self._trigger_time and not self._triggered:
             self._triggered = True
     
 class ZeroFault(Fault):
     """Fault that sets the output to zero after a certain time."""
     def __init__(self, name: str, trigger_time: float = 0.0):
-        """Initialize the zero fault with a name and port.
+        """Create a zeroing fault.
 
-        Args:
-            name (str): Name of the fault.
-            port: The port associated with the fault.
+        Parameters
+        ----------
+        name : str
+            Fault name.
+        trigger_time : float, optional
+            Time when output is forced to zero.
         """
         super().__init__(name)
         self._trigger_time = trigger_time

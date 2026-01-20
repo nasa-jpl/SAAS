@@ -14,13 +14,12 @@ class NodeConstantOutputs(NamedTuple):
 
 class NodeConstant(Node):
     def __init__(self, value: np.array, **kwargs):
-        """Node implementing a constant value output.
+        """Node producing a constant value each update.
 
-        Args:
-            value (np.array): The constant value to output.
-
-        Ports:
-            output (np.array): output port for constant value
+        Parameters
+        ----------
+        value : np.array
+            Constant payload to emit on every update.
         """
         # ports = {"output": OutputPort("output", self)}
         self._v = value

@@ -13,31 +13,38 @@ class NodeParameter:
     """Node parameters are used to store values for a node which represent nominally parametric values of the model which the node implements. However, these parameters may be faulted and thus may be overridden by the fault logic in a similar way to ports."""
 
     def __init__(self, name: str, value: Any):
-        """Node parameters are used to store values for a node which represent nominally parametric values of the model which the node implements. However, these parameters may be faulted and thus may be overridden by the fault logic in a similar way to ports.
+        """Create a parameter that can be faulted.
 
-        Args:
-            name (str): Name of the parameter
-            value (Any): Value of the parameter
+        Parameters
+        ----------
+        name : str
+            Parameter name.
+        value : Any
+            Stored value prior to any fault mutation.
         """
         self._name = name
         self._value = value
         self._faults: List[Fault] = []
 
     def add_fault(self, fault):
-        """Add a fault to this parameter. The fault will be applied to the value of this parameter when it is accessed.
+        """Attach a fault to this parameter.
 
-        Args:
-            fault (Fault): Fault to add
+        Parameters
+        ----------
+        fault : Fault
+            Fault to evaluate whenever the parameter is read.
         """
         self._faults.append(fault)
 
     # getter and setters
     @property
     def value(self) -> Any:
-        """The value of this parameter, possibly modified by active faults.
+        """Return the parameter value after active faults are applied.
 
-        Returns:
-            Any: value
+        Returns
+        -------
+        Any
+            Possibly fault-mutated value.
         """
         cval = deepcopy(self._value)
         for f in self._faults:
@@ -47,27 +54,24 @@ class NodeParameter:
 
     @property
     def name(self) -> str:
-        """The name of this parameter.
-
-        Returns:
-            str: name
-        """
+        """Name of the parameter."""
         return self._name
 
     @name.setter
     def name(self, name: str):
-        """Set the name of this parameter.
-
-        Args:
-            name (str): new name
-        """
+        """Set the parameter name."""
         if not isinstance(name, str):
             raise TypeError("Parameter name must be a string")
         self._name = name
 
 
 class Node(ABC):
-    """A class representing a single unit of behavior in a simulation. This can be anything from a basic operation, like addition or multiplication, to a complicated model of a component, such as an inertial measurement unit, or physcial phenomenon or much more."""
+    """Abstract base class for simulation nodes.
+
+    Nodes own ports, optional parameters, and implement simulation lifecycle
+    hooks. Subclasses define behavior in :meth:`initialize`, :meth:`update`,
+    and :meth:`finalize`.
+    """
 
     def __init__(
         self,
@@ -79,14 +83,24 @@ class Node(ABC):
         sample_period=None,
         name: str = None,
     ):
-        """A class representing a single unit of behavior in a simulation. This can be anything from a basic operation, like addition or multiplication, to a complicated model of a component, such as an inertial measurement unit, or physcial phenomenon or much more.
+        """Construct a node.
 
-        Args:
-            ports (Dict[str, Union[InputPort, OutputPort]]): Dictionary of ports. Maps port names as a string to the port object itself.
-            config (str, optional): Path to a TOML file containing the configuration values for this node. Defaults to None.
-            sample_frequency (float, optional): Frequency at which this node is updated in the simulation. Superceeds setting sample_period through the constructor. Defaults to None.
-            sample_period (float, optional): Period between node updates in the simulation. Defaults to None.
-            name (str, optional): Name of the node. Used to map configuration values and faults to this node. Defaults to None.
+        Parameters
+        ----------
+        input_ports : NamedTuple or tuple
+            Input ports owned by the node.
+        output_ports : NamedTuple or tuple
+            Output ports owned by the node.
+        parameters : NamedTuple or tuple, optional
+            Node parameters that can also be faulted.
+        config : str, optional
+            Path to a TOML file with per-node configuration keyed by node name.
+        sample_frequency : float, optional
+            Update frequency in Hz; overrides ``sample_period`` when provided.
+        sample_period : float, optional
+            Update period in seconds.
+        name : str, optional
+            Node name, also used to pull configuration from the TOML file.
         """
 
         self._i = input_ports
@@ -118,13 +132,22 @@ class Node(ABC):
         self._system: "NodeSystem" = None
 
     def __getitem__(self, key: str) -> Union[InputPort, OutputPort]:
-        """Get a port from this node by name.
+        """Return a port by name.
 
-        Args:
-            key (str): Name of the port
+        Parameters
+        ----------
+        key : str
+            Port name.
 
-        Returns:
-            Union[InputPort, OutputPort]: Port with the given name
+        Returns
+        -------
+        InputPort or OutputPort
+            Matching port.
+
+        Raises
+        ------
+        KeyError
+            If no port with ``key`` exists.
         """
         # Search the union of self._i and self._o for the port with this name
         for p in self._i + self._o:
@@ -133,31 +156,37 @@ class Node(ABC):
         raise KeyError(f"Port {key} not found in node {self._name}")
 
     def initialize(self):
-        """Method stub for initializing the node at the start of a simulation. All initialization actions should be done here when subclassing the node. This ensures that the node will be properlly reset in simulations that run multiple batches."""
+        """Initialize node state prior to simulation batches."""
         pass
 
     def finalize(self, fault_history: Dict[float, Dict[str, bool]] = None):
-        """Finalize the node. This is called after the simulation ends.
+        """Finalize after simulation completes.
 
-        Args:
-            fault_history: Dictionary mapping simulation time to fault name->active status
+        Parameters
+        ----------
+        fault_history : dict, optional
+            Mapping from simulation time to fault activation status.
         """
         self._fault_history = fault_history or {}
         pass
 
     def update(self, sim_time: float):
-        """Method stub for updating a node during the simulation. At a schedule determined by the nodes frequency, this method is called to allow the node to process inputs and produce outputs.
+        """Execute one update at the given simulation time.
 
-        Args:
-            sim_time (float): the current simulation time.
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time.
         """
         pass
 
     def depends(self) -> List["Node"]:
-        """Enumerate the nodes on which this node depends. These nodes will be updated before this node.
+        """List node dependencies based on connected input ports.
 
-        Returns:
-            List[Node]: the nodes in the system on which this node depends
+        Returns
+        -------
+        list of Node
+            Nodes that must execute before this one.
         """
         deps = list()
         for p in self.i:
@@ -179,20 +208,12 @@ class Node(ABC):
 
     @property
     def p(self):
-        """Parameters for this Node.
-
-        Returns:
-            Union[NamedTuple, Tuple]: parameters
-        """
+        """Parameters for this Node."""
         return ()
 
     @property
     def period(self) -> float:
-        """Period at whcih this node is updated in [s]
-
-        Returns:
-            float: period
-        """
+        """Update period in seconds."""
         return self._period
 
     @period.setter
@@ -201,11 +222,7 @@ class Node(ABC):
 
     @property
     def frequency(self) -> Union[float, None]:
-        """The frequency at which this node is updated in [Hz]
-
-        Returns:
-            Union[float, None]: frequency
-        """
+        """Update frequency in Hz."""
         if self._period is None:
             return None
         else:
@@ -217,29 +234,17 @@ class Node(ABC):
 
     @property
     def n_inputs(self) -> int:
-        """Number of input ports in this node
-
-        Returns:
-            int: num inputs
-        """
+        """Number of input ports."""
         return len(self._i)
 
     @property
     def n_outputs(self) -> int:
-        """number of output ports in this node
-
-        Returns:
-            int: num outputs
-        """
+        """Number of output ports."""
         return len(self._o)
 
     @property
     def name(self) -> str:
-        """The name of this node
-
-        Returns:
-            str: name
-        """
+        """Name of the node."""
         return self._name
 
     @name.setter
@@ -253,7 +258,12 @@ class Node(ABC):
 
 
 class NodeDifferential(Node):
-    """A class representing any node that models a differential equation. These nodes are special in that they may have inputs, but are assumed to only depend on the input values from the simulation step before the one they are currently updating too. This means that they do not have dependencies for the purpose of solving for a node update order."""
+    """Base class for nodes that integrate differential equations.
+
+    Differential nodes are assumed to depend only on inputs from the previous
+    simulation step, so they declare no dependencies and help avoid algebraic
+    loops in the execution order.
+    """
 
     def __init__(
         self,
@@ -263,11 +273,20 @@ class NodeDifferential(Node):
         parameters: Union[NamedTuple, Tuple] = (),
         **kwargs,
     ):
-        """A class representing any node that models a differential equation. These nodes are special in that they may have inputs, but are assumed to only depend on the input values from the simulation step before the one they are currently updating too. This means that they do not have dependencies for the purpose of solving for a node update order.
+        """Construct a differential node.
 
-        Args:
-            x0 (array): The initial internal state of this node. This is the state used in the differential equation the node models.
-            ports (Dict[str, Union[InputPort, OutputPort]]): Dictionary of ports. Maps port names as a string to the port object itself.
+        Parameters
+        ----------
+        x0 : array
+            Initial state for the modeled differential equation.
+        input_ports : list-like
+            Input ports for the node.
+        output_ports : list-like
+            Output ports for the node.
+        parameters : NamedTuple or tuple, optional
+            Parameters that may be faulted.
+        **kwargs
+            Forwarded to :class:`Node`.
         """
 
         self._x = x0

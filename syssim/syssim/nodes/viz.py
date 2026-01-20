@@ -11,17 +11,22 @@ class NodeScopeInputs(NamedTuple):
 
 class NodeScope(Node):
     def __init__(self, **kwargs):
-        """Node implementing a scope. Displays values recorded in the simulation in a matplotlib plot.
+        """Time-series plotting node using matplotlib.
 
-        Ports:
-            input_scope (np.array): input for the values to be recorded and plotted
-
-        Configs:
-            title (str): graph title
-            xlabel (str): graph x label
-            ylabal (str): graph y label
-            save (bool): should we save the figure?
-            show (bool): should we show the figure?
+        Configuration (TOML)
+        --------------------
+        title : str, optional
+            Plot title.
+        xlabel : str, optional
+            X-axis label.
+        ylabel : str, optional
+            Y-axis label.
+        legend : list, optional
+            Legend entries passed to ``plt.legend``.
+        save : bool, optional
+            Save figure under the simulation output directory.
+        show : bool, optional
+            Display the plot interactively.
         """
         self._t = list()
         self._y = list()
@@ -41,7 +46,7 @@ class NodeScope(Node):
         self._t.append(sim_time)
         self._y.append(self._i.scope.read())
 
-    def finalize(self):
+    def finalize(self, fault_history = None):
         plt.figure
         plt.plot(self._t, self._y)
         plt.xlabel(self._xlabel)
