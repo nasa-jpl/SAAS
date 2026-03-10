@@ -9,6 +9,7 @@ from syssim.core import NodeSystem
 from syssim.nodes.dynamics import NodeStateSpace
 from syssim.nodes.source import NodeConstant
 from syssim.nodes.viz import NodeScope
+from syssim.fault.disconect import ZeroFault
 
 
 """ 
@@ -32,15 +33,19 @@ node_lti = NodeStateSpace(
     name="state-space-filter",
 )
 node_scope = NodeScope(name="scope", config=sys.argv[1])
+zero_failt = ZeroFault(name="zero-fault", trigger_time=3.0)
 
 # Setup system by adding nodes and specifying connections
 n_sys = NodeSystem()
 n_sys.add_node(node_step)
 n_sys.add_node(node_lti)
 n_sys.add_node(node_scope)
-n_sys.add_faults(sys.argv[2])
-node_step["output"] = node_lti["input_u"]
-node_lti["output_y"] = node_scope["input_scope"]
+n_sys.add_faults(zero_failt)
+
+node_step.o.constant_out >> node_lti.i.u
+node_lti.o.y >> node_scope.i.scope
+
+node_step.o.constant_out.add_fault(zero_failt)
 
 # Can print the system to show some info about it...
 print(n_sys)
