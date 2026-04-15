@@ -267,15 +267,22 @@ class ReactionWheelConfig:
     - Optional imbalance/jitter body-torque disturbance
     """
 
-    wheel_inertia_kgm2: tuple[float, float, float] = (0.08, 0.08, 0.08)
-    torque_max_nm: tuple[float, float, float] = (0.015, 0.015, 0.015)
+    # Default hardware target: Blue Canyon Technologies RW2
+    # (max momentum 2.0 Nms, max torque 0.12 Nm, dynamic unbalance < 250 g-mm^2).
+    wheel_inertia_kgm2: tuple[float, float, float] = (
+        2.0 / (6000.0 * 2.0 * np.pi / 60.0),
+        2.0 / (6000.0 * 2.0 * np.pi / 60.0),
+        2.0 / (6000.0 * 2.0 * np.pi / 60.0),
+    )
+    torque_max_nm: tuple[float, float, float] = (0.12, 0.12, 0.12)
     wheel_speed_max_rads: tuple[float, float, float] = (6000.0 * 2.0 * np.pi / 60.0,) * 3
-    momentum_max_nms: tuple[float, float, float] = (18.0, 18.0, 18.0)
+    momentum_max_nms: tuple[float, float, float] = (2.0, 2.0, 2.0)
     command_lag_tau_s: float = 0.05
     viscous_friction_nms: float = 1.0e-5
     coulomb_friction_nm: float = 2.0e-5
     jitter_std_nm: float = 1.0e-5
-    imbalance_coeff_nm_per_rads2: float = 1.0e-8
+    # 250 g-mm^2 = 2.5e-7 kg*m^2, used as a conservative imbalance torque coefficient upper bound.
+    imbalance_coeff_nm_per_rads2: float = 2.5e-7
     imbalance_freq_hz: float = 37.0
 
 
