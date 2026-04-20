@@ -132,7 +132,7 @@ class NodeAsteroidGravity(Node):
             lat,
             lon,
             lmax=self._max_degree,
-            omega=omega
+            # omega=omega
         )
         
         # Convert from spherical to Cartesian coordinates
