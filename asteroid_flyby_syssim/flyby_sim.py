@@ -1199,7 +1199,12 @@ class NodeFrameCollector(Node):
         if not self._frames:
             return
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
-        imageio.mimsave(self._output_path, self._frames, duration=1.0 / max(self._fps, 1e-6))
+        imageio.mimsave(
+            self._output_path,
+            self._frames,
+            duration=1.0 / max(self._fps, 1e-6),
+            loop=0,
+        )
 
     @property
     def i(self):

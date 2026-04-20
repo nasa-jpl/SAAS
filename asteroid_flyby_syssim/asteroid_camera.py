@@ -6,6 +6,7 @@ import pyshtools as pysh
 import mitsuba as mi
 import matplotlib.pyplot as plt
 import drjit as dr
+import struct
 import platformdirs
 import os
 from pathlib import Path
@@ -309,7 +310,7 @@ class NodeAsteroidCamera(Node):
         # Create filename based on asteroid and shape model resolution
         asteroid = self._p.asteroid.value
         lmax = self._shape_model.lmax
-        ply_filename = f"asteroid_{asteroid.lower()}_lmax{lmax}.ply"
+        ply_filename = f"asteroid_{asteroid.lower()}_lmax{lmax}_binary_v2.ply"
         ply_path = os.path.join(cache_dir, ply_filename)
         
         # Check if already cached - if so, skip mesh creation
@@ -326,30 +327,30 @@ class NodeAsteroidCamera(Node):
         faces_np = faces
         
         # Write PLY file
-        with open(ply_path, 'w') as f:
+        with open(ply_path, 'wb') as f:
             # Write PLY header
-            f.write("ply\n")
-            f.write("format ascii 1.0\n")
-            f.write(f"comment Asteroid: {asteroid}\n")
-            f.write(f"comment Shape model lmax: {lmax}\n")
-            f.write(f"element vertex {len(positions_np)}\n")
-            f.write("property float x\n")
-            f.write("property float y\n")
-            f.write("property float z\n")
-            f.write("property float nx\n")
-            f.write("property float ny\n")
-            f.write("property float nz\n")
-            f.write(f"element face {len(faces_np)}\n")
-            f.write("property list uchar int vertex_indices\n")
-            f.write("end_header\n")
+            f.write(b"ply\n")
+            f.write(b"format binary_little_endian 1.0\n")
+            f.write(f"comment Asteroid: {asteroid}\n".encode("ascii"))
+            f.write(f"comment Shape model lmax: {lmax}\n".encode("ascii"))
+            f.write(f"element vertex {len(positions_np)}\n".encode("ascii"))
+            f.write(b"property float x\n")
+            f.write(b"property float y\n")
+            f.write(b"property float z\n")
+            f.write(b"property float nx\n")
+            f.write(b"property float ny\n")
+            f.write(b"property float nz\n")
+            f.write(f"element face {len(faces_np)}\n".encode("ascii"))
+            f.write(b"property list uchar int vertex_indices\n")
+            f.write(b"end_header\n")
             
             # Write vertices with normals
-            for pos, norm in zip(positions_np, normals_np):
-                f.write(f"{pos[0]} {pos[1]} {pos[2]} {norm[0]} {norm[1]} {norm[2]}\n")
+            vertex_data = np.column_stack((positions_np, normals_np)).astype(np.float32, copy=False)
+            f.write(vertex_data.tobytes(order="C"))
             
             # Write faces (PLY uses 0-based indexing, prepend count)
             for face in faces_np:
-                f.write(f"3 {face[0]} {face[1]} {face[2]}\n")
+                f.write(struct.pack("<Biii", 3, int(face[0]), int(face[1]), int(face[2])))
         
         self._ply_path = ply_path
         return ply_path

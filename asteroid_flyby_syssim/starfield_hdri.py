@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime
 from pathlib import Path
 import platformdirs
-from tqdm import tqdm
+from rich.progress import track
 
 try:
     import OpenEXR
@@ -113,7 +113,11 @@ def generate_starfield_hdri(
     
     # Render stars
     print("  Rendering stars...")
-    for idx, star_data in tqdm(hip_df.iterrows(), total=len(hip_df), leave=False):
+    for idx, star_data in track(
+        hip_df.iterrows(),
+        total=len(hip_df),
+        description="  Rendering stars",
+    ):
         try:
             # Equirectangular coordinates
             ra_deg = star_data['ra_degrees']
