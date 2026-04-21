@@ -20,9 +20,11 @@ from scipy.integrate import solve_ivp
 from scipy.spatial.transform import Rotation
 
 from syssim.core import InputPort, Node, NodeDifferential, NodeSystem, OutputPort
+from syssim.nodes.io import ExternalInputNode, ExternalOutputNode
 
 from .asteroid_camera import NodeAsteroidCamera
 from .asteroid_gravity import NodeAsteroidGravity
+from .gyroscope import NodeGyroscope
 
 
 # Tetrahedral reaction wheel configuration.
@@ -1224,6 +1226,146 @@ class FlybyArtifacts:
     rendered_video: Path | None
 
 
+def build_flyby_rl_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]:
+    output_dir = Path(cfg.output.output_dir) / cfg.output.run_name
+    trajectory_animation = output_dir / "trajectory_look.gif"
+    log_prefix = output_dir / "timeseries"
+
+    gravity = NodeAsteroidGravity(
+        asteroid=cfg.asteroid.asteroid,
+        lmax=cfg.asteroid.gravity_lmax,
+        name="gravity",
+    )
+
+    mu = gravity._gravity_model.gm
+
+    r0, v0 = _hyperbolic_state_from_params(
+        mu=mu,
+        periapsis_radius_m=cfg.flyby.periapsis_radius_m,
+        external_angle=cfg.flyby.external_angle_deg,
+        true_anomaly_deg=cfg.flyby.true_anomaly0_deg,
+        inbound_ra_deg=cfg.flyby.inbound_ra_deg,
+        inbound_dec_deg=cfg.flyby.inbound_dec_deg,
+        bplane_angle_deg=cfg.flyby.bplane_angle_deg,
+    )
+
+    translational = NodeHyperbolicDynamics(np.concatenate([r0, v0]), mu=mu, name="translational")
+    allocator = NodeTorqueAllocator(name="allocator")
+    wheels = [
+        NodeReactionWheel(
+            i,
+            cfg.rwa,
+            TETRAHEDRAL_WHEEL_AXES[i],
+            name=f"wheel_{i}"
+        )
+        for i in range(4)
+    ]
+    aggregator = NodeWheelAggregator(name="aggregator")
+
+    attitude = NodeAttitudeDynamics(
+        inertia_kgm2=cfg.spacecraft.inertia_kgm2,
+        x0=np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=float),
+        name="attitude",
+    )
+    look = NodeLookVector(cfg.spacecraft.boresight_body, name="look")
+    gyroscope = NodeGyroscope(name="gyroscope")
+
+    cam = NodeAsteroidCamera(
+        asteroid=cfg.asteroid.asteroid,
+        resolution_width=cfg.output.camera_width,
+        resolution_height=cfg.output.camera_height,
+        fov=cfg.output.camera_fov_deg,
+        spp=cfg.output.spp,
+        look_at_origin=False,
+        date=datetime.fromisoformat(cfg.sim.start_date_utc)
+        if cfg.sim.start_date_utc is not None
+        else datetime.now(timezone.utc),
+        name="camera",
+    )
+    cam.frequency = cfg.output.render_fps
+
+    rl_action = ExternalInputNode(initial_value=np.zeros(3, dtype=float), name="rl_action_input")
+    gyro_output = ExternalOutputNode(name="rl_gyro_output")
+    camera_image_output = ExternalOutputNode(name="rl_camera_image_output")
+    camera_mask_output = ExternalOutputNode(name="rl_camera_mask_output")
+    camera_visible_output = ExternalOutputNode(name="rl_camera_visible_output")
+    attitude_output = ExternalOutputNode(name="rl_attitude_output")
+    position_output = ExternalOutputNode(name="rl_position_output")
+
+    system = NodeSystem()
+    for n in [
+        gravity,
+        translational,
+        allocator,
+    ] + wheels + [
+        aggregator,
+        attitude,
+        look,
+        gyroscope,
+        cam,
+        rl_action,
+        gyro_output,
+        camera_image_output,
+        camera_mask_output,
+        camera_visible_output,
+        attitude_output,
+        position_output,
+    ]:
+        system.add_node(n)
+
+    # Translational dynamics feedback loop
+    translational.o.position >> gravity.i.position
+    gravity.o.gravity_accel >> translational.i.gravity_accel
+
+    # Attitude guidance is handled externally via RL action input
+    action_input = rl_action.o.out
+    action_input >> allocator.i.tau_cmd_body
+
+    # Wire each wheel's command (need to pack into array and unpack per wheel)
+    for i in range(4):
+        allocator.o.tau_cmd_wheel >> wheels[i].i.tau_cmd
+
+    # Aggregate wheel outputs
+    wheels[0].o.h_rw >> aggregator.i.h_rw_0
+    wheels[0].o.tau_rw >> aggregator.i.tau_rw_0
+    wheels[1].o.h_rw >> aggregator.i.h_rw_1
+    wheels[1].o.tau_rw >> aggregator.i.tau_rw_1
+    wheels[2].o.h_rw >> aggregator.i.h_rw_2
+    wheels[2].o.tau_rw >> aggregator.i.tau_rw_2
+    wheels[3].o.h_rw >> aggregator.i.h_rw_3
+    wheels[3].o.tau_rw >> aggregator.i.tau_rw_3
+
+    # Attitude dynamics from aggregated wheel outputs
+    aggregator.o.tau_rw_total >> attitude.i.tau_body
+    aggregator.o.h_rw_total >> attitude.i.h_rw_body
+
+    # Gyroscope measurement from attitude dynamics
+    attitude.o.w >> gyroscope.i.angular_velocity
+
+    # Look vector and camera feed
+    attitude.o.q >> look.i.q
+    translational.o.position >> look.i.position
+    translational.o.position >> cam.i.camera_position
+    look.o.look_target >> cam.i.camera_target
+
+    # External observation taps
+    gyroscope.o.measurement >> gyro_output.i.inp
+    cam.o.image >> camera_image_output.i.inp
+    cam.o.asteroid_mask >> camera_mask_output.i.inp
+    cam.o.asteroid_visible >> camera_visible_output.i.inp
+    attitude.o.q >> attitude_output.i.inp
+    translational.o.position >> position_output.i.inp
+
+    artifacts = FlybyArtifacts(
+        output_dir=output_dir,
+        trajectory_animation=trajectory_animation,
+        log_csv=log_prefix.with_suffix(".csv"),
+        log_npz=log_prefix.with_suffix(".npz"),
+        rendered_video=None,
+    )
+    return system, artifacts
+
+
 def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]:
     output_dir = Path(cfg.output.output_dir) / cfg.output.run_name
     trajectory_animation = output_dir / "trajectory_look.gif"
@@ -1279,6 +1421,8 @@ def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]
     )
     look = NodeLookVector(cfg.spacecraft.boresight_body, name="look")
 
+    gyroscope = NodeGyroscope(name="gyroscope")
+
     animator = NodeTrajectoryAnimator(
         output_path=trajectory_animation,
         fps=cfg.output.trajectory_fps,
@@ -1288,7 +1432,7 @@ def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]
     recorder = NodeDataRecorder(output_prefix=log_prefix, name="recorder")
 
     system = NodeSystem()
-    for n in [gravity, translational, guidance, controller, allocator] + wheels + [aggregator, attitude, look, animator, recorder]:
+    for n in [gravity, translational, guidance, controller, allocator] + wheels + [aggregator, attitude, look, gyroscope, animator, recorder]:
         system.add_node(n)
 
     # Translational dynamics feedback loop
@@ -1326,6 +1470,9 @@ def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]
     # Attitude dynamics from aggregated wheel outputs
     aggregator.o.tau_rw_total >> attitude.i.tau_body
     aggregator.o.h_rw_total >> attitude.i.h_rw_body
+
+    # Gyroscope measurement from attitude dynamics
+    attitude.o.w >> gyroscope.i.angular_velocity
 
     # Look vector computation and animation
     attitude.o.q >> look.i.q

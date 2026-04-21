@@ -16,6 +16,44 @@ from syssim.core import Node, InputPort, OutputPort
 from syssim.core.node import NodeParameter
 from .starfield_hdri import generate_starfield_hdri
 
+
+_ASTEROID_VISIBILITY_INTEGRATOR_REGISTERED = False
+
+
+def _ensure_asteroid_visibility_integrator_registered():
+    global _ASTEROID_VISIBILITY_INTEGRATOR_REGISTERED
+    if _ASTEROID_VISIBILITY_INTEGRATOR_REGISTERED:
+        return
+
+    class AsteroidVisibilityIntegrator(mi.SamplingIntegrator):
+        def __init__(self, props=mi.Properties()):
+            super().__init__(props)
+
+        def sample(
+            self,
+            scene: mi.Scene,
+            sampler: mi.Sampler,
+            ray: mi.RayDifferential3f,
+            medium: mi.Medium = None,
+            active: bool = True,
+        ) -> tuple[mi.Color3f, bool, list[float]]:
+            del sampler, medium
+
+            ray = mi.Ray3f(ray)
+            active = mi.Bool(active)
+
+            pi: mi.PreliminaryIntersection3f = scene.ray_intersect_preliminary(ray)
+            hit = active & pi.is_valid()
+
+            mask_value = dr.select(hit, 1.0, 0.0)
+            return mi.Color3f(mask_value), mi.Bool(True), []
+
+    mi.register_integrator(
+        "asteroid_visibility",
+        lambda props: AsteroidVisibilityIntegrator(props),
+    )
+    _ASTEROID_VISIBILITY_INTEGRATOR_REGISTERED = True
+
 try:
     from skyfield.api import Loader, wgs84
     from skyfield.data import mpc
@@ -36,6 +74,10 @@ class NodeAsteroidCameraInputs(NamedTuple):
 class NodeAsteroidCameraOutputs(NamedTuple):
     image: OutputPort
     """Rendered image as numpy array [height, width, channels]"""
+    asteroid_mask: OutputPort
+    """Binary semantic mask image identifying asteroid pixels."""
+    asteroid_visible: OutputPort
+    """Boolean indicating whether the asteroid intersects the frame."""
 
 
 class NodeAsteroidCamera(Node):
@@ -127,7 +169,11 @@ class NodeAsteroidCamera(Node):
             InputPort("camera_position", self),
             InputPort("camera_target", self),
         )
-        self._o = NodeAsteroidCameraOutputs(OutputPort("image", self))
+        self._o = NodeAsteroidCameraOutputs(
+            OutputPort("image", self),
+            OutputPort("asteroid_mask", self),
+            OutputPort("asteroid_visible", self),
+        )
 
         self._p = self.Parameters(
             NodeParameter("asteroid", asteroid),
@@ -142,6 +188,7 @@ class NodeAsteroidCamera(Node):
         # Auto-select rendering backend: CUDA GPU if available, CPU otherwise.
         selected_variant = self._select_mitsuba_variant()
         mi.set_variant(selected_variant)
+        _ensure_asteroid_visibility_integrator_registered()
 
         # Store date for sun position computation
         self._date = date
@@ -493,7 +540,7 @@ class NodeAsteroidCamera(Node):
         # Save mesh to PLY file in cache (checks for existing file first)
         self._save_mesh_as_ply()
 
-    def _build_scene(self, camera_pos, camera_target):
+    def _build_scene(self, camera_pos, camera_target, integrator_type: str = "path"):
         """Build complete Mitsuba scene with camera at given position."""
         # Camera transform
         camera_pos = np.array(camera_pos, dtype=np.float32)
@@ -518,13 +565,18 @@ class NodeAsteroidCamera(Node):
         far_clip = 1e7 * scale         # 10,000 km scaled
         
         # Build scene dictionary
+        if integrator_type == "path":
+            integrator = {
+                "type": "path",
+                "max_depth": 8,  # Maximum path depth for ray tracing
+            }
+        else:
+            integrator = {"type": integrator_type}
+
         scene_dict = {
             "type": "scene",
             # Integrator for rendering
-            "integrator": {
-                "type": "path",
-                "max_depth": 8,  # Maximum path depth for ray tracing
-            },
+            "integrator": integrator,
             # Camera
             "camera": {
                 "type": "perspective",
@@ -603,7 +655,7 @@ class NodeAsteroidCamera(Node):
             camera_target = np.array([0.0, 0.0, 0.0])
 
         # Build scene with camera
-        scene = self._build_scene(camera_pos_scaled, camera_target)
+        scene = self._build_scene(camera_pos_scaled, camera_target, integrator_type="path")
 
         # Render
         image = mi.render(scene)
@@ -615,8 +667,24 @@ class NodeAsteroidCamera(Node):
         image_np = np.clip(image_np, 0, 1)
         image_8bit = (image_np * 255).astype(np.uint8)
 
+        # Render a semantic mask pass using a primary-ray visibility integrator.
+        mask_scene = self._build_scene(
+            camera_pos_scaled,
+            camera_target,
+            integrator_type="asteroid_visibility",
+        )
+        mask = mi.render(mask_scene)
+        mask_np = np.array(mask)
+        if mask_np.ndim == 3:
+            mask_np = mask_np[..., 0]
+        mask_np = np.clip(mask_np, 0, 1)
+        mask_8bit = (mask_np * 255).astype(np.uint8)
+        asteroid_visible = bool(np.any(mask_np > 0.0))
+
         # Output the rendered image
         self._o.image.shift_out(image_8bit, sim_time)
+        self._o.asteroid_mask.shift_out(mask_8bit, sim_time)
+        self._o.asteroid_visible.shift_out(asteroid_visible, sim_time)
 
     @property
     def i(self):
