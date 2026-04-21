@@ -216,7 +216,7 @@ def _hyperbolic_state_from_params(
 
 @dataclass
 class SimulationConfig:
-    duration_s: float = 18000.0
+    duration_s: float = 36000.0
     dt_s: float = 0.5
     start_date_utc: str = "2028-01-01T00:00:00+00:00"
 
@@ -229,8 +229,8 @@ class AsteroidConfig:
 
 @dataclass
 class FlybyConfig:
-    periapsis_radius_m: float = 2.0e6
-    external_angle_deg: float = 110.0
+    periapsis_radius_m: float = 8.0e5
+    external_angle_deg: float = 140.0
     true_anomaly0_deg: float = -90.0
     inbound_ra_deg: float = 10.0
     inbound_dec_deg: float = 10.0
@@ -1179,34 +1179,46 @@ class NodeDataRecorder(Node):
 
 class NodeFrameCollectorInputs(NamedTuple):
     image: InputPort
+    mask: InputPort
 
 
 class NodeFrameCollector(Node):
-    def __init__(self, output_path: Path, fps: float, **kwargs):
-        self._i = NodeFrameCollectorInputs(InputPort("image", self))
+    def __init__(self, output_path: Path, output_mask_path: Path | None = None, fps: float = 20, **kwargs):
+        self._i = NodeFrameCollectorInputs(InputPort("image", self), InputPort("mask", self))
         self._output_path = Path(output_path)
+        self._output_mask_path = Path(output_mask_path) if output_mask_path is not None else None
         self._fps = fps
         super().__init__(self._i, (), **kwargs)
 
     def initialize(self):
-        self._frames: list[np.ndarray] = []
+        self._image_frames: list[np.ndarray] = []
+        self._mask_frames: list[np.ndarray] = []
 
     def update(self, sim_time: float):
-        frame = self._i.image.read()
-        if frame is None:
-            return
-        self._frames.append(np.asarray(frame, dtype=np.uint8))
+        image = self._i.image.read()
+        mask = self._i.mask.read()
+        if image is not None:
+            self._image_frames.append(np.asarray(image, dtype=np.uint8))
+        if mask is not None:
+            self._mask_frames.append(np.asarray(mask, dtype=np.uint8))
 
     def finalize(self, fault_history=None):
-        if not self._frames:
-            return
-        self._output_path.parent.mkdir(parents=True, exist_ok=True)
-        imageio.mimsave(
-            self._output_path,
-            self._frames,
-            duration=1.0 / max(self._fps, 1e-6),
-            loop=0,
-        )
+        if self._image_frames:
+            self._output_path.parent.mkdir(parents=True, exist_ok=True)
+            imageio.mimsave(
+                self._output_path,
+                self._image_frames,
+                duration=1.0 / max(self._fps, 1e-6),
+                loop=0,
+            )
+        if self._mask_frames and self._output_mask_path is not None:
+            self._output_mask_path.parent.mkdir(parents=True, exist_ok=True)
+            imageio.mimsave(
+                self._output_mask_path,
+                self._mask_frames,
+                duration=1.0 / max(self._fps, 1e-6),
+                loop=0,
+            )
 
     @property
     def i(self):
@@ -1516,7 +1528,12 @@ def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]
         )
         cam.frequency = cfg.output.render_fps
 
-        collector = NodeFrameCollector(output_path=render_video, fps=20, name="render_collector")
+        collector = NodeFrameCollector(
+            output_path=render_video,
+            output_mask_path=output_dir / "camera_mask_render.gif",
+            fps=20,
+            name="render_collector",
+        )
         collector.frequency = cfg.output.render_fps
 
         system.add_node(cam)
@@ -1525,6 +1542,7 @@ def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]
         translational.o.position >> cam.i.camera_position
         look.o.look_target >> cam.i.camera_target
         cam.o.image >> collector.i.image
+        cam.o.asteroid_mask >> collector.i.mask
 
         rendered_video_path = render_video
 

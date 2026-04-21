@@ -106,6 +106,16 @@ class NodeGyroscope(Node):
             config = GyroscopeConfig()
         self._config = config
 
+        # Save config values before calling super().__init__() because the
+        # syssim Node base class may overwrite self._config with a dict
+        # loaded from a TOML config file.
+        self._bias_rad_s = tuple(config.bias_rad_s)
+        self._scale_errors = tuple(config.scale_errors)
+        self._white_noise_std_rad_s = config.white_noise_std_rad_s
+        self._bias_random_walk_std_rad_s2 = config.bias_random_walk_std_rad_s2
+        self._sample_rate_hz = config.sample_rate_hz
+        self._rng_seed = config.rng_seed
+
         # Define input/output ports
         self._i = NodeGyroscopeInputs(InputPort("angular_velocity", self))
         self._o = NodeGyroscopeOutputs(OutputPort("measurement", self))
@@ -128,7 +138,7 @@ class NodeGyroscope(Node):
         - Random number generator with optional seed
         - Bias drift state (random walk accumulation)
         """
-        self._rng = np.random.default_rng(self._config.rng_seed)
+        self._rng = np.random.default_rng(self._rng_seed)
         self._bias_drift = np.array([0.0, 0.0, 0.0], dtype=float)
 
     def update(self, sim_time: float):
@@ -157,21 +167,18 @@ class NodeGyroscope(Node):
         scale_factors = 1.0 + scale_errors
 
         # ---- Update bias random walk (Allan noise) ----
-        # The bias drift evolves as: bias_drift(t) = bias_drift(t-1) + noise
-        # where noise ~ N(0, sigma^2 * dt)
-        dt = 1.0 / self._config.sample_rate_hz
+        dt = 1.0 / self._sample_rate_hz
         bias_walk_increment = self._rng.normal(
-            0.0, self._config.bias_random_walk_std_rad_s2 * np.sqrt(dt), size=3
+            0.0, self._bias_random_walk_std_rad_s2 * np.sqrt(dt), size=3
         )
         self._bias_drift += bias_walk_increment
 
         # ---- Compute noisy measurement ----
-        # measurement = (w_true * scale) + static_bias + bias_drift + white_noise
         w_measured = (w_true * scale_factors) + bias + self._bias_drift
 
         # Add white noise (uncorrelated per axis)
         white_noise = self._rng.normal(
-            0.0, self._config.white_noise_std_rad_s, size=3
+            0.0, self._white_noise_std_rad_s, size=3
         )
         w_measured += white_noise
 
