@@ -237,17 +237,9 @@ class TorchRLValueAdapter(nn.Module):
 
 def _stack_observations(observations: list[dict], device: torch.device) -> TensorDict:
     """Stack a list of Gym observations into a nested TorchRL TensorDict."""
-    images = []
-    gyros = []
-    for obs in observations:
-        image = torch.as_tensor(obs["image"], device=device)
-        if image.ndim == 3:
-            image = image.permute(2, 0, 1)
-        images.append(image)
-        gyros.append(torch.as_tensor(obs["gyro_history"], device=device, dtype=torch.float32))
-
-    image_batch = torch.stack(images)
-    gyro_batch = torch.stack(gyros)
+    image_batch = _stack_image_batch(observations, device)
+    gyro_batch = _stack_gyro_batch(observations, device)
+    batch_len = len(observations)
     return TensorDict(
         {
             "observation": TensorDict(
@@ -255,10 +247,26 @@ def _stack_observations(observations: list[dict], device: torch.device) -> Tenso
                     "image": image_batch,
                     "gyro_history": gyro_batch,
                 },
-                batch_size=[len(images)],
+                batch_size=[batch_len],
             )
         },
-        batch_size=[len(images)],
+        batch_size=[batch_len],
+    )
+
+
+def _stack_image_batch(observations: list[dict], device: torch.device) -> torch.Tensor:
+    images = []
+    for obs in observations:
+        image = torch.as_tensor(obs["image"], device=device)
+        if image.ndim == 3:
+            image = image.permute(2, 0, 1)
+        images.append(image)
+    return torch.stack(images)
+
+
+def _stack_gyro_batch(observations: list[dict], device: torch.device) -> torch.Tensor:
+    return torch.stack(
+        [torch.as_tensor(obs["gyro_history"], device=device, dtype=torch.float32) for obs in observations]
     )
 
 
@@ -371,6 +379,14 @@ class RLEnvironmentArgs:
     torque_scale_nm: float = 1.0
     gyro_history_length: int = 4
     render_at_frequency: Optional[float] = None
+    randomize_on_reset: bool = True
+    periapsis_radius_scale_range: list[float] = field(default_factory=lambda: [0.8, 1.2])
+    external_angle_offset_deg_range: list[float] = field(default_factory=lambda: [-20.0, 20.0])
+    true_anomaly0_offset_deg_range: list[float] = field(default_factory=lambda: [-45.0, 45.0])
+    inbound_ra_offset_deg_range: list[float] = field(default_factory=lambda: [-30.0, 30.0])
+    inbound_dec_offset_deg_range: list[float] = field(default_factory=lambda: [-20.0, 20.0])
+    bplane_angle_offset_deg_range: list[float] = field(default_factory=lambda: [-30.0, 30.0])
+    start_datetime_jitter_hours: float = 24.0
 
 
 @dataclass
@@ -568,6 +584,14 @@ def create_environment(args: TrainArgs) -> gym.Env:
         torque_scale_nm=args.rl_environment.torque_scale_nm,
         gyro_history_length=args.rl_environment.gyro_history_length,
         render_at_frequency=args.rl_environment.render_at_frequency,
+        randomize_on_reset=args.rl_environment.randomize_on_reset,
+        periapsis_radius_scale_range=tuple(args.rl_environment.periapsis_radius_scale_range),
+        external_angle_offset_deg_range=tuple(args.rl_environment.external_angle_offset_deg_range),
+        true_anomaly0_offset_deg_range=tuple(args.rl_environment.true_anomaly0_offset_deg_range),
+        inbound_ra_offset_deg_range=tuple(args.rl_environment.inbound_ra_offset_deg_range),
+        inbound_dec_offset_deg_range=tuple(args.rl_environment.inbound_dec_offset_deg_range),
+        bplane_angle_offset_deg_range=tuple(args.rl_environment.bplane_angle_offset_deg_range),
+        start_datetime_jitter_hours=args.rl_environment.start_datetime_jitter_hours,
     )
     
     env = AsteroidTrackingEnv(flyby_config=flyby_cfg, rl_config=rl_cfg)
@@ -694,7 +718,6 @@ def train(
             rollout_steps = int(args.training.steps_per_rollout)
             batch_actions = []
             batch_action_log_probs = []
-            batch_rewards = []
             batch_dones = []
             batch_terminated = []
             batch_observations = []
@@ -707,12 +730,6 @@ def train(
                 actions = dist.rsample().clamp(-1.0, 1.0)
                 action_log_probs = dist.log_prob(actions).unsqueeze(-1)
                 
-                next_obs_list = []
-                rewards = []
-                dones = []
-                terminated_flags = []
-                next_rewards = []
-                
                 for env_idx, env in enumerate(envs):
                     action = actions[env_idx].cpu().numpy()
                     obs, reward, terminated, truncated, info = env.step(action)
@@ -723,7 +740,6 @@ def train(
                     batch_actions.append(actions[env_idx].cpu())
                     batch_action_log_probs.append(action_log_probs[env_idx].cpu())
                     batch_next_rewards.append(torch.tensor([reward], device=device, dtype=torch.float32))
-                    batch_rewards.append(torch.tensor([reward], device=device, dtype=torch.float32))
                     batch_dones.append(torch.tensor([done], device=device, dtype=torch.bool))
                     batch_terminated.append(torch.tensor([terminated], device=device, dtype=torch.bool))
                     
@@ -753,15 +769,8 @@ def train(
                 {
                     "observation": TensorDict(
                         {
-                            "image": torch.stack([
-                                torch.as_tensor(o["image"], device=device).permute(2, 0, 1)
-                                if torch.as_tensor(o["image"]).ndim == 3
-                                else torch.as_tensor(o["image"], device=device)
-                                for o in batch_observations
-                            ]),
-                            "gyro_history": torch.stack(
-                                [torch.as_tensor(o["gyro_history"], device=device, dtype=torch.float32) for o in batch_observations]
-                            ),
+                            "image": _stack_image_batch(batch_observations, device),
+                            "gyro_history": _stack_gyro_batch(batch_observations, device),
                         },
                         batch_size=[num_transitions],
                     ),
@@ -773,15 +782,8 @@ def train(
                         {
                             "observation": TensorDict(
                                 {
-                                    "image": torch.stack([
-                                        torch.as_tensor(o["image"], device=device).permute(2, 0, 1)
-                                        if torch.as_tensor(o["image"]).ndim == 3
-                                        else torch.as_tensor(o["image"], device=device)
-                                        for o in batch_next_observations
-                                    ]),
-                                    "gyro_history": torch.stack(
-                                        [torch.as_tensor(o["gyro_history"], device=device, dtype=torch.float32) for o in batch_next_observations]
-                                    ),
+                                    "image": _stack_image_batch(batch_next_observations, device),
+                                    "gyro_history": _stack_gyro_batch(batch_next_observations, device),
                                 },
                                 batch_size=[num_transitions],
                             ),

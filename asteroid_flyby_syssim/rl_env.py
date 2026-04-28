@@ -9,8 +9,9 @@ The environment provides:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
+from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import gymnasium as gym
@@ -20,9 +21,7 @@ from scipy.spatial.transform import Rotation
 
 from syssim.core import NodeSystem
 
-from .asteroid_camera import NodeAsteroidCamera, NodeFrameCollector
 from .flyby_sim import build_flyby_rl_system, FlybyRunConfig, FlybyArtifacts
-from .gyroscope import GyroscopeConfig
 
 
 def _quat_wxyz_to_xyzw(q_wxyz: np.ndarray) -> np.ndarray:
@@ -77,6 +76,22 @@ class RLEnvironmentConfig:
     render_at_frequency : int
         Render camera image at this frequency (Hz). If None, render every step.
         E.g., render_at_frequency=10 means render every 0.1 seconds.
+    randomize_on_reset : bool
+        If True, sample a new flyby orbit and start datetime each environment reset.
+    periapsis_radius_scale_range : tuple[float, float]
+        Multiplicative range applied to base periapsis radius.
+    external_angle_offset_deg_range : tuple[float, float]
+        Additive offset range for flyby external angle [deg].
+    true_anomaly0_offset_deg_range : tuple[float, float]
+        Additive offset range for initial true anomaly [deg].
+    inbound_ra_offset_deg_range : tuple[float, float]
+        Additive offset range for inbound right ascension [deg].
+    inbound_dec_offset_deg_range : tuple[float, float]
+        Additive offset range for inbound declination [deg].
+    bplane_angle_offset_deg_range : tuple[float, float]
+        Additive offset range for B-plane angle [deg].
+    start_datetime_jitter_hours : float
+        Uniform start-time jitter window in +/- hours around base start datetime.
     """
     
     camera_width: int = 128
@@ -88,6 +103,14 @@ class RLEnvironmentConfig:
     torque_scale_nm: float = 1.0
     gyro_history_length: int = 4
     render_at_frequency: Optional[int] = None
+    randomize_on_reset: bool = False
+    periapsis_radius_scale_range: tuple[float, float] = (0.8, 1.2)
+    external_angle_offset_deg_range: tuple[float, float] = (-20.0, 20.0)
+    true_anomaly0_offset_deg_range: tuple[float, float] = (-45.0, 45.0)
+    inbound_ra_offset_deg_range: tuple[float, float] = (-30.0, 30.0)
+    inbound_dec_offset_deg_range: tuple[float, float] = (-20.0, 20.0)
+    bplane_angle_offset_deg_range: tuple[float, float] = (-30.0, 30.0)
+    start_datetime_jitter_hours: float = 24.0
 
 
 class AsteroidTrackingEnv(gym.Env):
@@ -165,6 +188,70 @@ class AsteroidTrackingEnv(gym.Env):
         
         # For reward computation
         self._info = {}
+
+        # Keep an immutable baseline for reset-time randomization.
+        self._base_flyby_config = deepcopy(flyby_config)
+
+    @staticmethod
+    def _sample_uniform(rng: np.random.Generator, bounds: tuple[float, float]) -> float:
+        lo, hi = bounds
+        if hi < lo:
+            lo, hi = hi, lo
+        return float(rng.uniform(lo, hi))
+
+    def _randomized_flyby_config(self) -> FlybyRunConfig:
+        """Create a reset-specific flyby config with randomized orbit/time."""
+        cfg = deepcopy(self._base_flyby_config)
+        if not self.rl_config.randomize_on_reset:
+            return cfg
+
+        fly = cfg.flyby
+
+        periapsis_scale = self._sample_uniform(self._rng, self.rl_config.periapsis_radius_scale_range)
+        fly.periapsis_radius_m = max(100.0, float(fly.periapsis_radius_m) * periapsis_scale)
+
+        fly.external_angle_deg = float(fly.external_angle_deg) + self._sample_uniform(
+            self._rng,
+            self.rl_config.external_angle_offset_deg_range,
+        )
+        fly.external_angle_deg = float(np.clip(fly.external_angle_deg, 95.0, 175.0))
+
+        fly.true_anomaly0_deg = float(fly.true_anomaly0_deg) + self._sample_uniform(
+            self._rng,
+            self.rl_config.true_anomaly0_offset_deg_range,
+        )
+        fly.true_anomaly0_deg = float(np.clip(fly.true_anomaly0_deg, -170.0, 170.0))
+
+        fly.inbound_ra_deg = float(fly.inbound_ra_deg) + self._sample_uniform(
+            self._rng,
+            self.rl_config.inbound_ra_offset_deg_range,
+        )
+        fly.inbound_ra_deg = ((fly.inbound_ra_deg + 180.0) % 360.0) - 180.0
+
+        fly.inbound_dec_deg = float(fly.inbound_dec_deg) + self._sample_uniform(
+            self._rng,
+            self.rl_config.inbound_dec_offset_deg_range,
+        )
+        fly.inbound_dec_deg = float(np.clip(fly.inbound_dec_deg, -85.0, 85.0))
+
+        fly.bplane_angle_deg = float(fly.bplane_angle_deg) + self._sample_uniform(
+            self._rng,
+            self.rl_config.bplane_angle_offset_deg_range,
+        )
+        fly.bplane_angle_deg = ((fly.bplane_angle_deg + 180.0) % 360.0) - 180.0
+
+        try:
+            base_dt = datetime.fromisoformat(cfg.sim.start_date_utc)
+            if base_dt.tzinfo is None:
+                base_dt = base_dt.replace(tzinfo=timezone.utc)
+            jitter_h = max(0.0, float(self.rl_config.start_datetime_jitter_hours))
+            dt_offset_h = self._sample_uniform(self._rng, (-jitter_h, jitter_h))
+            cfg.sim.start_date_utc = (base_dt + timedelta(hours=dt_offset_h)).isoformat()
+        except Exception:
+            # Keep original date if parsing fails.
+            pass
+
+        return cfg
         
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None) -> tuple[dict, dict]:
         """Reset environment to initial state.
@@ -192,7 +279,8 @@ class AsteroidTrackingEnv(gym.Env):
             except Exception:
                 pass
 
-        # Rebuild simulation with the RL-specific system builder.
+        # Rebuild simulation with a (possibly randomized) reset-specific config.
+        self.flyby_config = self._randomized_flyby_config()
         self._system, self._artifacts = build_flyby_rl_system(self.flyby_config)
 
         # Initialize simulation nodes and populate the first observation.

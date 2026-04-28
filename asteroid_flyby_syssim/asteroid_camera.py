@@ -4,12 +4,10 @@ from typing import NamedTuple
 import numpy as np
 import pyshtools as pysh
 import mitsuba as mi
-import matplotlib.pyplot as plt
 import drjit as dr
 import struct
 import platformdirs
 import os
-from pathlib import Path
 from datetime import datetime, timezone
 
 from syssim.core import Node, InputPort, OutputPort
@@ -95,6 +93,7 @@ class NodeAsteroidCamera(Node):
         "Vesta": "DLR_SPG_shape",  # DLR stereo-photogrammetric shape
         "Eros": "NLR_shape",  # Laser altimeter shape
     }
+    FIBONACCI_SPHERE_POINTS = 15000
 
     class Parameters(NamedTuple):
         asteroid: NodeParameter
@@ -211,8 +210,8 @@ class NodeAsteroidCamera(Node):
         # Compute sun direction in J2000 frame
         self._sun_direction = self._compute_sun_direction()
 
-        # Generate/load starfield HDRI
-        self._hdri_path = generate_starfield_hdri(output_dir=self._cache_dir, date=date)
+        # In inertial frame usage, reuse a shared cached starfield asset.
+        self._hdri_path = generate_starfield_hdri(output_dir=self._cache_dir)
 
         # Load shape model and create mesh
         self._load_shape_model()
@@ -255,7 +254,7 @@ class NodeAsteroidCamera(Node):
         # ------------------------------------------------------------------
         # Number of points tuned for RL throughput: enough fidelity for training,
         # substantially less startup mesh generation cost than the previous default.
-        n_points = 15000
+        n_points = self.FIBONACCI_SPHERE_POINTS
         
         indices = np.arange(0, n_points, dtype=np.float64)  # Use float64 for pyshtools
         phi = np.pi * (3.0 - np.sqrt(5.0))  # Golden angle in radians
@@ -789,131 +788,3 @@ class NodeAsteroidCamera(Node):
     @property
     def p(self):
         return self._p
-
-
-if __name__ == "__main__":
-    """Test the asteroid camera node by rendering a single frame."""
-    import random
-    from syssim.core import NodeSystem
-    from syssim.nodes.source import NodeConstant
-
-    # Custom node to display rendered images
-    class NodeImageDisplay(Node):
-        class Inputs(NamedTuple):
-            image: InputPort
-
-        def __init__(self, title="Rendered Image", **kwargs):
-            self._i = self.Inputs(InputPort("image", self))
-            self._title = title
-            self._image = None
-            super().__init__(self._i, (), **kwargs)
-
-        def update(self, sim_time: float):
-            image = self._i.image.read()
-            if image is not None:
-                self._image = image
-
-        def finalize(self, fault_history=None):
-            if self._image is not None:
-                print(f"Displaying image...")
-                print(f"  Shape: {self._image.shape}")
-                print(f"  Dtype: {self._image.dtype}")
-                print(f"  Value range: [{self._image.min()}, {self._image.max()}]\n")
-
-                plt.figure(figsize=(12, 9))
-                plt.imshow(self._image)
-                plt.title(self._title, fontsize=16, fontweight="bold")
-                plt.axis("off")
-                plt.tight_layout()
-                plt.show()
-            else:
-                print("No image received for display!")
-
-        @property
-        def i(self):
-            return self._i
-
-        @property
-        def o(self):
-            return ()
-
-    print("\n" + "=" * 60)
-    print("Testing Asteroid Camera Node")
-    print("=" * 60 + "\n")
-
-    # Select a random asteroid
-    asteroids = list(NodeAsteroidCamera.ASTEROID_SHAPE_DATASETS.keys())
-    selected_asteroid = random.choice(asteroids)
-
-    print(f"Selected asteroid: {selected_asteroid}")
-    print("Loading shape model and setting up renderer...")
-
-    # Create camera node
-    camera_node = NodeAsteroidCamera(
-        asteroid=selected_asteroid,
-        resolution_width=800,
-        resolution_height=600,
-        fov=60.0,
-        spp=64,
-        look_at_origin=True,
-        name="asteroid_camera",
-    )
-
-    # Get shape information
-    r_mean = np.mean(camera_node._shape_grid.data)
-    
-    # Note: With Fibonacci sampling, we use a fixed number of points
-    n_vertices = 10000  # As defined in _create_mesh_from_shape
-    n_faces_approx = 2 * n_vertices - 4  # Approximate for closed convex hull
-    
-    print(f"Mean radius: {r_mean/1000:.1f} km")
-    print(f"Shape model lmax: {camera_node._shape_model.lmax}")
-    print(f"Mesh vertices: ~{n_vertices}")
-    print(f"Mesh faces: ~{n_faces_approx}")
-    print(f"PLY file: {camera_node._ply_path}\n")
-
-    # Set camera position at 3x mean radius, viewing from angle
-    camera_distance = 3.0 * r_mean
-    camera_position = np.array(
-        [
-            camera_distance * np.cos(np.radians(30)),
-            camera_distance * np.sin(np.radians(30)),
-            camera_distance * 0.3,
-        ]
-    )
-
-    print(
-        f"Camera position: [{camera_position[0]/1000:.1f}, {camera_position[1]/1000:.1f}, {camera_position[2]/1000:.1f}] km"
-    )
-    print(f"Distance from center: {np.linalg.norm(camera_position)/1000:.1f} km")
-    print(f"Field of view: {camera_node.p.fov.value}°")
-    print(
-        f"Resolution: {camera_node.p.resolution_width.value}x{camera_node.p.resolution_height.value}"
-    )
-    print(f"Samples per pixel: {camera_node.p.spp.value}\n")
-
-    # Create position source node
-    position_node = NodeConstant(value=camera_position, name="camera_position")
-
-    # Create image display node
-    display_node = NodeImageDisplay(
-        title=f"Rendered View of {selected_asteroid}", name="image_display"
-    )
-
-    # Create system and add nodes
-    system = NodeSystem()
-    system.add_node(position_node)
-    system.add_node(camera_node)
-    system.add_node(display_node)
-
-    # Connect nodes
-    position_node.o.constant_out >> camera_node.i.camera_position
-    camera_node.o.image >> display_node.i.image
-
-    print("Rendering...")
-    # Run simulation for single step
-    system.simulate(t_f=0.1, dt=0.1)
-
-    print("\n" + "=" * 60)
-    print("Test Complete!")
-    print("=" * 60 + "\n")

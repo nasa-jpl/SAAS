@@ -1239,6 +1239,47 @@ class FlybyArtifacts:
     rendered_video: Path | None
 
 
+def _parse_start_datetime(start_date_utc: str | None) -> datetime:
+    if start_date_utc is None:
+        return datetime.now(timezone.utc)
+    start_dt = datetime.fromisoformat(start_date_utc)
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone.utc)
+    return start_dt
+
+
+def _build_camera_node(cfg: FlybyRunConfig, start_dt: datetime, name: str = "camera") -> NodeAsteroidCamera:
+    cam = NodeAsteroidCamera(
+        asteroid=cfg.asteroid.asteroid,
+        resolution_width=cfg.output.camera_width,
+        resolution_height=cfg.output.camera_height,
+        fov=cfg.output.camera_fov_deg,
+        spp=cfg.output.spp,
+        use_integrator_mask=cfg.output.use_integrator_mask,
+        look_at_origin=False,
+        date=start_dt,
+        name=name,
+    )
+    cam.frequency = cfg.output.render_fps
+    return cam
+
+
+def _connect_allocator_to_wheels(allocator: NodeTorqueAllocator, wheels: list[NodeReactionWheel]) -> None:
+    for wheel in wheels:
+        allocator.o.tau_cmd_wheel >> wheel.i.tau_cmd
+
+
+def _connect_wheel_aggregator(wheels: list[NodeReactionWheel], aggregator: NodeWheelAggregator) -> None:
+    wheels[0].o.h_rw >> aggregator.i.h_rw_0
+    wheels[0].o.tau_rw >> aggregator.i.tau_rw_0
+    wheels[1].o.h_rw >> aggregator.i.h_rw_1
+    wheels[1].o.tau_rw >> aggregator.i.tau_rw_1
+    wheels[2].o.h_rw >> aggregator.i.h_rw_2
+    wheels[2].o.tau_rw >> aggregator.i.tau_rw_2
+    wheels[3].o.h_rw >> aggregator.i.h_rw_3
+    wheels[3].o.tau_rw >> aggregator.i.tau_rw_3
+
+
 def build_flyby_rl_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]:
     output_dir = Path(cfg.output.output_dir) / cfg.output.run_name
     trajectory_animation = output_dir / "trajectory_look.gif"
@@ -1283,20 +1324,7 @@ def build_flyby_rl_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifac
     look = NodeLookVector(cfg.spacecraft.boresight_body, name="look")
     gyroscope = NodeGyroscope(name="gyroscope")
 
-    cam = NodeAsteroidCamera(
-        asteroid=cfg.asteroid.asteroid,
-        resolution_width=cfg.output.camera_width,
-        resolution_height=cfg.output.camera_height,
-        fov=cfg.output.camera_fov_deg,
-        spp=cfg.output.spp,
-        use_integrator_mask=cfg.output.use_integrator_mask,
-        look_at_origin=False,
-        date=datetime.fromisoformat(cfg.sim.start_date_utc)
-        if cfg.sim.start_date_utc is not None
-        else datetime.now(timezone.utc),
-        name="camera",
-    )
-    cam.frequency = cfg.output.render_fps
+    cam = _build_camera_node(cfg, _parse_start_datetime(cfg.sim.start_date_utc), name="camera")
 
     rl_action = ExternalInputNode(initial_value=np.zeros(3, dtype=float), name="rl_action_input")
     gyro_output = ExternalOutputNode(name="rl_gyro_output")
@@ -1335,19 +1363,8 @@ def build_flyby_rl_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifac
     action_input = rl_action.o.out
     action_input >> allocator.i.tau_cmd_body
 
-    # Wire each wheel's command (need to pack into array and unpack per wheel)
-    for i in range(4):
-        allocator.o.tau_cmd_wheel >> wheels[i].i.tau_cmd
-
-    # Aggregate wheel outputs
-    wheels[0].o.h_rw >> aggregator.i.h_rw_0
-    wheels[0].o.tau_rw >> aggregator.i.tau_rw_0
-    wheels[1].o.h_rw >> aggregator.i.h_rw_1
-    wheels[1].o.tau_rw >> aggregator.i.tau_rw_1
-    wheels[2].o.h_rw >> aggregator.i.h_rw_2
-    wheels[2].o.tau_rw >> aggregator.i.tau_rw_2
-    wheels[3].o.h_rw >> aggregator.i.h_rw_3
-    wheels[3].o.tau_rw >> aggregator.i.tau_rw_3
+    _connect_allocator_to_wheels(allocator, wheels)
+    _connect_wheel_aggregator(wheels, aggregator)
 
     # Attitude dynamics from aggregated wheel outputs
     aggregator.o.tau_rw_total >> attitude.i.tau_body
@@ -1467,19 +1484,8 @@ def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]
     # Allocation to wheels
     controller.o.tau_cmd_body >> allocator.i.tau_cmd_body
 
-    # Wire each wheel's command (need to pack into array and unpack per wheel)
-    for i in range(4):
-        allocator.o.tau_cmd_wheel >> wheels[i].i.tau_cmd
-
-    # Aggregate wheel outputs
-    wheels[0].o.h_rw >> aggregator.i.h_rw_0
-    wheels[0].o.tau_rw >> aggregator.i.tau_rw_0
-    wheels[1].o.h_rw >> aggregator.i.h_rw_1
-    wheels[1].o.tau_rw >> aggregator.i.tau_rw_1
-    wheels[2].o.h_rw >> aggregator.i.h_rw_2
-    wheels[2].o.tau_rw >> aggregator.i.tau_rw_2
-    wheels[3].o.h_rw >> aggregator.i.h_rw_3
-    wheels[3].o.tau_rw >> aggregator.i.tau_rw_3
+    _connect_allocator_to_wheels(allocator, wheels)
+    _connect_wheel_aggregator(wheels, aggregator)
 
     # Attitude dynamics from aggregated wheel outputs
     aggregator.o.tau_rw_total >> attitude.i.tau_body
@@ -1514,22 +1520,7 @@ def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]
 
     rendered_video_path: Path | None = None
     if cfg.output.render_video:
-        start_dt = datetime.fromisoformat(cfg.sim.start_date_utc)
-        if start_dt.tzinfo is None:
-            start_dt = start_dt.replace(tzinfo=timezone.utc)
-
-        cam = NodeAsteroidCamera(
-            asteroid=cfg.asteroid.asteroid,
-            resolution_width=cfg.output.camera_width,
-            resolution_height=cfg.output.camera_height,
-            fov=cfg.output.camera_fov_deg,
-            spp=cfg.output.spp,
-            use_integrator_mask=cfg.output.use_integrator_mask,
-            look_at_origin=False,
-            date=start_dt,
-            name="camera",
-        )
-        cam.frequency = cfg.output.render_fps
+        cam = _build_camera_node(cfg, _parse_start_datetime(cfg.sim.start_date_utc), name="camera")
 
         collector = NodeFrameCollector(
             output_path=render_video,

@@ -1,6 +1,7 @@
 """Unit tests for RL environment wrapper."""
 
 import numpy as np
+import pytest
 
 from asteroid_flyby_syssim.flyby_sim import FlybyRunConfig
 from asteroid_flyby_syssim.rl_env import AsteroidTrackingEnv, RLEnvironmentConfig
@@ -131,6 +132,69 @@ def test_rl_config_defaults():
     assert config.asteroid_visibility_threshold > 0
     assert config.torque_scale_nm > 0
     assert config.gyro_history_length >= 1
+
+
+def test_reset_randomizes_orbit_and_start_datetime(monkeypatch):
+    """Reset randomization should alter flyby orbit params and start date."""
+    class DummyCamera:
+        def __init__(self, **kwargs):
+            self._kwargs = kwargs
+            self.frequency = 1.0
+
+    monkeypatch.setattr(asteroid_camera, "NodeAsteroidCamera", DummyCamera)
+    monkeypatch.setattr(flyby_sim, "NodeAsteroidCamera", DummyCamera)
+
+    captured_cfgs = []
+
+    def fake_build(cfg):
+        captured_cfgs.append(cfg)
+
+        class DummySystem:
+            def initialize(self):
+                pass
+
+            def finalize(self):
+                pass
+
+            def step(self, dt):
+                pass
+
+            def get_node(self, name):
+                return None
+
+        return DummySystem(), None
+
+    monkeypatch.setattr(flyby_sim, "build_flyby_rl_system", fake_build)
+
+    flyby_cfg = FlybyRunConfig()
+    base_periapsis = flyby_cfg.flyby.periapsis_radius_m
+    base_date = flyby_cfg.sim.start_date_utc
+
+    rl_cfg = RLEnvironmentConfig(
+        randomize_on_reset=True,
+        periapsis_radius_scale_range=(0.9, 1.1),
+        external_angle_offset_deg_range=(-5.0, 5.0),
+        true_anomaly0_offset_deg_range=(-5.0, 5.0),
+        inbound_ra_offset_deg_range=(-5.0, 5.0),
+        inbound_dec_offset_deg_range=(-5.0, 5.0),
+        bplane_angle_offset_deg_range=(-5.0, 5.0),
+        start_datetime_jitter_hours=12.0,
+    )
+
+    env = AsteroidTrackingEnv(flyby_config=flyby_cfg, rl_config=rl_cfg, seed=123)
+    env.reset()
+
+    assert captured_cfgs, "Expected build_flyby_rl_system to be called on reset"
+    sampled_cfg = captured_cfgs[0]
+
+    assert sampled_cfg.flyby.periapsis_radius_m != base_periapsis
+    assert sampled_cfg.sim.start_date_utc != base_date
+
+    low = base_periapsis * 0.9
+    high = base_periapsis * 1.1
+    assert low <= sampled_cfg.flyby.periapsis_radius_m <= high
+
+    env.close()
 
 
 if __name__ == "__main__":

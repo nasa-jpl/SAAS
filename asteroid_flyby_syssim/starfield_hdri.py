@@ -2,8 +2,6 @@
 
 import os
 import numpy as np
-from datetime import datetime
-from pathlib import Path
 import platformdirs
 from rich.progress import track
 
@@ -22,7 +20,6 @@ except ImportError:
 
 try:
     from skyfield.api import load
-    from skyfield.iokit import Loader
     from skyfield.data import hipparcos
     HAS_SKYFIELD = True
 except ImportError:
@@ -53,7 +50,7 @@ def generate_starfield_hdri(
     output_dir : str, optional
         Directory to save HDRI. If None, uses system cache.
     date : datetime, optional
-        Date/time for star positions. If None, uses current date.
+        Ignored for inertial-frame starfields. Kept for backward compatibility.
     
     Returns
     -------
@@ -71,33 +68,30 @@ def generate_starfield_hdri(
     
     os.makedirs(output_dir, exist_ok=True)
     
-    if date is None:
-        date = datetime.now()
-    
-    # Generate filename based on parameters
-    hdri_filename = (
+    # In an inertial frame, star positions are fixed for our use case, so cache
+    # key depends only on render parameters, not date/time.
+    hdri_filename_base = (
         f"starfield_hdri_{resolution[0]}x{resolution[1]}_"
-        f"mag{min_magnitude:.1f}.exr"
+        f"mag{min_magnitude:.1f}"
     )
-    hdri_path = os.path.join(output_dir, hdri_filename)
-    
-    # Return cached version if it exists
-    if os.path.exists(hdri_path):
-        return hdri_path
+    exr_path = os.path.join(output_dir, f"{hdri_filename_base}.exr")
+    png_path = os.path.join(output_dir, f"{hdri_filename_base}.png")
+
+    # Return cached version if it exists (support both EXR and PNG fallback).
+    if os.path.exists(exr_path):
+        return exr_path
+    if os.path.exists(png_path):
+        return png_path
     
     print("Generating starfield HDRI...")
     print(f"  Resolution: {resolution[0]}x{resolution[1]}")
     print(f"  Magnitude limit: {min_magnitude}")
-    print(f"  Date: {date}")
     
-    # Load ephemeris and Hipparcos catalog
+    # Load Hipparcos catalog
     print("  Loading star catalog...")
-    # ts = load.timescale()
-    
+
     cache_dir = platformdirs.user_cache_dir("syssim-smad", "saas")
     os.makedirs(cache_dir, exist_ok=True)
-    
-    eph = Loader(cache_dir)('de421.bsp')
     
     # Download Hipparcos data to cache
     hipparcos_path = os.path.join(cache_dir, 'hipparcos.dat')
@@ -158,26 +152,25 @@ def generate_starfield_hdri(
     
     # Save as EXR if possible, otherwise PNG
     if HAS_OPENEXR:
-        print(f"  Saving to {hdri_path}...")
+        print(f"  Saving to {exr_path}...")
         header = OpenEXR.Header(resolution[0], resolution[1])
         half_chan = Imath.Channel(Imath.PixelType(Imath.PixelType.FLOAT))
         header['channels'] = dict([(c, half_chan) for c in "RGB"])
-        
-        exr = OpenEXR.OutputFile(hdri_path, header)
+
+        exr = OpenEXR.OutputFile(exr_path, header)
         exr.writePixels({
             'R': hdri[:, :, 0].astype(np.float32).tobytes(),
             'G': hdri[:, :, 1].astype(np.float32).tobytes(),
             'B': hdri[:, :, 2].astype(np.float32).tobytes()
         })
         exr.close()
-        return hdri_path
+        return exr_path
     elif HAS_PIL:
         # Fallback to PNG
         tone_mapped = np.clip(hdri ** (1/2.2), 0, 1)
         tone_mapped = (tone_mapped * 255).astype(np.uint8)
         img = Image.fromarray(tone_mapped)
-        
-        png_path = hdri_path.replace('.exr', '.png')
+
         img.save(png_path)
         print(f"  Saved PNG fallback to {png_path}")
         return png_path

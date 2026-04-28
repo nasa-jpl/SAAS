@@ -50,6 +50,14 @@ python -m asteroid_flyby_syssim.train_ppo \
   --rl-environment.torque-scale-nm 1.0 \
   --rl-environment.gyro-history-length 4 \
   --rl-environment.render-at-frequency None \
+  --rl-environment.randomize-on-reset True \
+  --rl-environment.periapsis-radius-scale-range 0.8 1.2 \
+  --rl-environment.external-angle-offset-deg-range -20.0 20.0 \
+  --rl-environment.true-anomaly0-offset-deg-range -45.0 45.0 \
+  --rl-environment.inbound-ra-offset-deg-range -30.0 30.0 \
+  --rl-environment.inbound-dec-offset-deg-range -20.0 20.0 \
+  --rl-environment.bplane-angle-offset-deg-range -30.0 30.0 \
+  --rl-environment.start-datetime-jitter-hours 24.0 \
   --network.vit-model vit_tiny \
   --network.vit-pretrained True \
   --network.vit-freeze-depth 6 \
