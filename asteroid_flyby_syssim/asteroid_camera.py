@@ -104,28 +104,27 @@ class NodeAsteroidCamera(Node):
         spp: NodeParameter  # samples per pixel
         look_at_origin: NodeParameter
         scale_factor: NodeParameter
+        use_integrator_mask: NodeParameter
 
     @staticmethod
     def _select_mitsuba_variant() -> str:
         """Pick the best available Mitsuba variant, preferring GPU backends."""
-        # try:
-        #     available = set(mi.variants())
-        # except Exception:
-        #     available = set()
+        try:
+            available = set(mi.variants())
+        except Exception:
+            available = set()
 
-        # # Prefer CUDA when present, then LLVM CPU JIT, then scalar fallback.
-        # preferred = (
-        #     "cuda_ad_rgb",
-        #     "cuda_rgb",
-        #     "llvm_ad_rgb",
-        #     "llvm_rgb",
-        #     "scalar_rgb",
-        # )
-        # for variant in preferred:
-        #     if variant in available:
-        #         return variant
+        preferred = (
+            "cuda_ad_rgb",
+            "cuda_rgb",
+            "llvm_ad_rgb",
+            "llvm_rgb",
+            "scalar_rgb",
+        )
+        for variant in preferred:
+            if variant in available:
+                return variant
 
-        # Conservative fallback if variant enumeration fails.
         return "llvm_ad_rgb"
 
     def __init__(
@@ -137,6 +136,7 @@ class NodeAsteroidCamera(Node):
         spp: int = 32,
         look_at_origin: bool = True,
         scale_factor: float = 0.001,
+        use_integrator_mask: bool = False,
         date: datetime = datetime.now(timezone.utc),
         **kwargs,
     ):
@@ -159,6 +159,9 @@ class NodeAsteroidCamera(Node):
         scale_factor : float
             Scale factor for the entire scene (default: 1.0). Values < 1.0 scale down,
             values > 1.0 scale up. Affects asteroid size, camera positions, and clipping planes.
+        use_integrator_mask : bool
+            If True, compute mask/visibility with the old Mitsuba visibility integrator
+            (slower, second render pass). If False, use geometric estimate (faster).
         """
         if asteroid not in self.ASTEROID_SHAPE_DATASETS:
             raise ValueError(
@@ -183,6 +186,7 @@ class NodeAsteroidCamera(Node):
             NodeParameter("spp", int(spp)),
             NodeParameter("look_at_origin", bool(look_at_origin)),
             NodeParameter("scale_factor", float(scale_factor)),
+            NodeParameter("use_integrator_mask", bool(use_integrator_mask)),
         )
 
         # Auto-select rendering backend: CUDA GPU if available, CPU otherwise.
@@ -231,6 +235,7 @@ class NodeAsteroidCamera(Node):
 
         # Expand to grid
         self._shape_grid = self._shape_model.expand(grid="DH2")
+        self._mean_radius_m = float(np.mean(self._shape_grid.data))
 
     def _create_mesh_from_shape(self):
         """Create a triangle mesh from the spherical-harmonic shape grid
@@ -248,9 +253,9 @@ class NodeAsteroidCamera(Node):
         # ------------------------------------------------------------------
         # 1️⃣  Generate Fibonacci sphere points
         # ------------------------------------------------------------------
-        # Number of points (tune this for resolution vs performance)
-        # Using ~10k points gives good resolution without being too heavy
-        n_points = 100000
+        # Number of points tuned for RL throughput: enough fidelity for training,
+        # substantially less startup mesh generation cost than the previous default.
+        n_points = 15000
         
         indices = np.arange(0, n_points, dtype=np.float64)  # Use float64 for pyshtools
         phi = np.pi * (3.0 - np.sqrt(5.0))  # Golden angle in radians
@@ -536,9 +541,13 @@ class NodeAsteroidCamera(Node):
 
     
     def _create_mitsuba_scene(self):
-        """Create base Mitsuba scene by saving mesh as PLY file.""" 
+        """Create and cache a base Mitsuba scene."""
         # Save mesh to PLY file in cache (checks for existing file first)
         self._save_mesh_as_ply()
+        default_camera_pos = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        default_camera_target = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        self._scene = self._build_scene(default_camera_pos, default_camera_target, integrator_type="path")
+        self._scene_params = mi.traverse(self._scene)
 
     def _build_scene(self, camera_pos, camera_target, integrator_type: str = "path"):
         """Build complete Mitsuba scene with camera at given position."""
@@ -621,6 +630,82 @@ class NodeAsteroidCamera(Node):
 
         return mi.load_dict(scene_dict)
 
+    def _update_scene_camera(self, camera_pos: np.ndarray, camera_target: np.ndarray):
+        """Update camera transform of the cached scene instead of rebuilding it."""
+        transform = mi.ScalarTransform4f.look_at(
+            origin=np.array(camera_pos, dtype=np.float32),
+            target=np.array(camera_target, dtype=np.float32),
+            up=np.array([0.0, 0.0, 1.0], dtype=np.float32),
+        )
+        self._scene_params["camera.to_world"] = transform
+        self._scene_params.update()
+
+    @staticmethod
+    def _safe_normalize(v: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+        n = np.linalg.norm(v)
+        if n < eps:
+            return np.zeros_like(v)
+        return v / n
+
+    def _estimate_visibility_and_mask(
+        self,
+        camera_pos_scaled: np.ndarray,
+        camera_target_scaled: np.ndarray,
+    ) -> tuple[np.ndarray, bool]:
+        """Estimate asteroid visibility and binary mask from camera geometry.
+
+        This avoids a second full render pass by using projected angular size.
+        """
+        width = int(self._p.resolution_width.value)
+        height = int(self._p.resolution_height.value)
+        mask = np.zeros((height, width), dtype=np.uint8)
+
+        forward = self._safe_normalize(camera_target_scaled - camera_pos_scaled)
+        to_center = -camera_pos_scaled
+        dist = float(np.linalg.norm(to_center))
+        if dist <= 1e-9:
+            return mask, False
+
+        center_dir = to_center / dist
+        scale = float(self._p.scale_factor.value)
+        radius_scaled = max(float(self._mean_radius_m) * scale, 1e-9)
+        if dist <= radius_scaled:
+            return np.full((height, width), 255, dtype=np.uint8), True
+
+        angular_radius = float(np.arcsin(np.clip(radius_scaled / dist, 0.0, 1.0)))
+        half_fov = np.deg2rad(float(self._p.fov.value) * 0.5)
+        center_angle = float(np.arccos(np.clip(np.dot(forward, center_dir), -1.0, 1.0)))
+        visible = center_angle <= (half_fov + angular_radius)
+        if not visible:
+            return mask, False
+
+        up_hint = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        right = np.cross(forward, up_hint)
+        if np.linalg.norm(right) < 1e-9:
+            right = np.cross(forward, np.array([0.0, 1.0, 0.0], dtype=np.float64))
+        right = self._safe_normalize(right)
+        up = self._safe_normalize(np.cross(right, forward))
+
+        z = float(np.dot(center_dir, forward))
+        if z <= 1e-9:
+            return mask, False
+        x = float(np.dot(center_dir, right) / z)
+        y = float(np.dot(center_dir, up) / z)
+
+        fx = 0.5 * width / np.tan(half_fov)
+        fy = fx
+        cx = 0.5 * width
+        cy = 0.5 * height
+
+        u = cx + fx * x
+        v = cy - fy * y
+        r_px = max(1.0, fx * np.tan(angular_radius) / z)
+
+        yy, xx = np.ogrid[:height, :width]
+        disk = (xx - u) ** 2 + (yy - v) ** 2 <= r_px ** 2
+        mask[disk] = 255
+        return mask, bool(disk.any())
+
     def initialize(self):
         """Initialize the node before simulation."""
         pass
@@ -654,11 +739,11 @@ class NodeAsteroidCamera(Node):
             # Backward compatible fallback.
             camera_target = np.array([0.0, 0.0, 0.0])
 
-        # Build scene with camera
-        scene = self._build_scene(camera_pos_scaled, camera_target, integrator_type="path")
+        # Reuse the cached scene by updating only camera transform.
+        self._update_scene_camera(camera_pos_scaled, camera_target)
 
-        # Render
-        image = mi.render(scene)
+        # Render RGB once.
+        image = mi.render(self._scene)
 
         # Convert to numpy array
         image_np = np.array(image)
@@ -667,19 +752,26 @@ class NodeAsteroidCamera(Node):
         image_np = np.clip(image_np, 0, 1)
         image_8bit = (image_np * 255).astype(np.uint8)
 
-        # Render a semantic mask pass using a primary-ray visibility integrator.
-        mask_scene = self._build_scene(
-            camera_pos_scaled,
-            camera_target,
-            integrator_type="asteroid_visibility",
-        )
-        mask = mi.render(mask_scene)
-        mask_np = np.array(mask)
-        if mask_np.ndim == 3:
-            mask_np = mask_np[..., 0]
-        mask_np = np.clip(mask_np, 0, 1)
-        mask_8bit = (mask_np * 255).astype(np.uint8)
-        asteroid_visible = bool(np.any(mask_np > 0.0))
+        if self._p.use_integrator_mask.value:
+            # Optional compatibility path: render semantic mask with the old integrator.
+            mask_scene = self._build_scene(
+                camera_pos_scaled,
+                camera_target,
+                integrator_type="asteroid_visibility",
+            )
+            mask = mi.render(mask_scene)
+            mask_np = np.array(mask)
+            if mask_np.ndim == 3:
+                mask_np = mask_np[..., 0]
+            mask_np = np.clip(mask_np, 0, 1)
+            mask_8bit = (mask_np * 255).astype(np.uint8)
+            asteroid_visible = bool(np.any(mask_np > 0.0))
+        else:
+            # Fast path: estimate visibility/mask from geometry.
+            mask_8bit, asteroid_visible = self._estimate_visibility_and_mask(
+                camera_pos_scaled=np.asarray(camera_pos_scaled, dtype=np.float64),
+                camera_target_scaled=np.asarray(camera_target, dtype=np.float64),
+            )
 
         # Output the rendered image
         self._o.image.shift_out(image_8bit, sim_time)

@@ -40,6 +40,7 @@ python -m asteroid_flyby_syssim.train_ppo \
   --output.camera-fov-deg 50.0 \
   --output.render-fps 10.0 \
   --output.spp 2 \
+  --output.use-integrator-mask False \
   --rl-environment.camera-width 128 \
   --rl-environment.camera-height 128 \
   --rl-environment.camera-fov-deg 50.0 \
@@ -57,7 +58,7 @@ python -m asteroid_flyby_syssim.train_ppo \
   --network.hidden-dim 256 \
   --network.action-std-init 0.5 \
   --training.algorithm PPO \
-  --training.num-envs 8 \
+  --training.num-envs 10 \
   --training.steps-per-rollout 512 \
   --training.num-epochs 3 \
   --training.batch-size 32 \

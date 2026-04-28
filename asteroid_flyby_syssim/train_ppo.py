@@ -357,6 +357,7 @@ class OutputArgs:
     camera_fov_deg: float = 50.0
     render_fps: float = 10.0
     spp: int = 2
+    use_integrator_mask: bool = False
 
 
 @dataclass
@@ -552,6 +553,7 @@ def create_environment(args: TrainArgs) -> gym.Env:
             camera_fov_deg=args.output.camera_fov_deg,
             render_fps=render_frequency,
             spp=args.output.spp,
+            use_integrator_mask=args.output.use_integrator_mask,
         ),
     )
     

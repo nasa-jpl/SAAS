@@ -299,6 +299,7 @@ class OutputConfig:
     camera_height: int = 512
     camera_fov_deg: float = 42.0
     spp: int = 16
+    use_integrator_mask: bool = False
 
 
 @dataclass
@@ -1288,6 +1289,7 @@ def build_flyby_rl_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifac
         resolution_height=cfg.output.camera_height,
         fov=cfg.output.camera_fov_deg,
         spp=cfg.output.spp,
+        use_integrator_mask=cfg.output.use_integrator_mask,
         look_at_origin=False,
         date=datetime.fromisoformat(cfg.sim.start_date_utc)
         if cfg.sim.start_date_utc is not None
@@ -1522,6 +1524,7 @@ def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]
             resolution_height=cfg.output.camera_height,
             fov=cfg.output.camera_fov_deg,
             spp=cfg.output.spp,
+            use_integrator_mask=cfg.output.use_integrator_mask,
             look_at_origin=False,
             date=start_dt,
             name="camera",
