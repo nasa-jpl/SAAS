@@ -3,24 +3,25 @@
 This script trains a Vision Transformer-based policy using PPO to autonomously
 control spacecraft attitude for acquiring and tracking an asteroid using camera
 observations and gyroscope measurements.
-
-Usage:
-    python -m asteroid_flyby_syssim.train_ppo \
-        --config configs/rl_training_config.toml \
-        --output-dir outputs/rl_training
 """
 
 from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import importlib
+
+try:
+    tomllib = importlib.import_module("tomllib")
+except ModuleNotFoundError:
+    tomllib = importlib.import_module("tomli")
+
 import gymnasium as gym
 import numpy as np
-import toml
 import torch
 import torch.nn as nn
 import tyro
@@ -30,12 +31,6 @@ from torch.utils.tensorboard import SummaryWriter
 from torchrl.modules import ProbabilisticActor
 from torchrl.modules.distributions import TanhNormal
 from torchrl.objectives import ClipPPOLoss, ValueEstimators
-
-try:
-    import timm
-except ImportError as e:
-    print(f"Error: timm not installed. Install with: pip install timm")
-    sys.exit(1)
 
 try:
     import timm
@@ -296,73 +291,281 @@ def _build_ppo_modules(
 
 
 @dataclass
-class TrainArgs:
-    """Command line arguments for the PPO training script."""
+class SimulationArgs:
+    sim_dt: float = 0.01
+    start_date_utc: str = "2024-01-01T00:00:00"
+    duration_seconds: float = 3600.0
 
-    config: Path = Path("configs/rl_training_config.toml")
+
+@dataclass
+class AsteroidArgs:
+    asteroid: str = "Ceres"
+    gravity_lmax: int = 10
+
+
+@dataclass
+class FlybyArgs:
+    periapsis_radius_m: float = 3000.0
+    external_angle_deg: float = 120.0
+    true_anomaly0_deg: float = -90.0
+    inbound_ra_deg: float = 0.0
+    inbound_dec_deg: float = 0.0
+    bplane_angle_deg: float = 0.0
+
+
+@dataclass
+class SpacecraftArgs:
+    inertia_kgm2: list[float] = field(default_factory=lambda: [10.0, 10.0, 10.0])
+    boresight_body: list[float] = field(default_factory=lambda: [1.0, 0.0, 0.0])
+
+
+@dataclass
+class ControllerArgs:
+    kp: float = 0.5
+    kd: float = 2.0
+    ki: float = 0.01
+    integral_limit: float = 0.1
+
+
+@dataclass
+class ReactionWheelArgs:
+    max_momentum_nms: float = 10.0
+    max_torque_nm: float = 1.0
+    max_speed_rps: float = 628.3
+    inertia_kgm2: float = 0.01
+    friction_viscous: float = 0.001
+    friction_coulomb: float = 0.001
+    command_lag_tau: float = 0.01
+
+
+@dataclass
+class GyroscopeArgs:
+    bias_rad_s: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    scale_errors: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    white_noise_std_rad_s: float = 1e-4
+    bias_random_walk_std_rad_s2: float = 1e-6
+    sample_rate_hz: float = 100.0
+
+
+@dataclass
+class OutputArgs:
+    output_dir: str = "outputs/rl_training"
+    run_name: str = "ast_track_01"
+    render_video: bool = False
+    camera_width: int = 128
+    camera_height: int = 128
+    camera_fov_deg: float = 50.0
+    render_fps: float = 10.0
+    spp: int = 2
+
+
+@dataclass
+class RLEnvironmentArgs:
+    camera_width: int = 128
+    camera_height: int = 128
+    camera_fov_deg: float = 50.0
+    max_steps: int = 1000
+    max_steps_without_asteroid: int = 100
+    asteroid_visibility_threshold: float = 0.01
+    torque_scale_nm: float = 1.0
+    gyro_history_length: int = 4
+    render_at_frequency: Optional[float] = None
+
+
+@dataclass
+class NetworkArgs:
+    vit_model: str = "vit_tiny"
+    vit_pretrained: bool = True
+    vit_freeze_depth: int = 6
+    temporal_attention_heads: int = 4
+    temporal_attention_dim: int = 64
+    hidden_dim: int = 256
+    action_std_init: float = 0.5
+
+
+@dataclass
+class TrainingArgs:
+    algorithm: str = "PPO"
+    num_envs: int = 8
+    steps_per_rollout: int = 512
+    num_epochs: int = 3
+    batch_size: int = 32
+    learning_rate: float = 1e-4
+    entropy_coeff: float = 0.01
+    value_coeff: float = 0.5
+    grad_clip_norm: float = 0.5
+    ppo_clip_ratio: float = 0.2
+    gae_lambda: float = 0.95
+    gamma: float = 0.99
+    lr_schedule: str = "constant"
+    warmup_steps: int = 0
+    max_steps: int = 1_000_000
+    checkpoint_frequency: int = 10_000
+    early_stopping_patience: int = 20
+    early_stopping_threshold: float = 0.95
+
+
+@dataclass
+class LoggingArgs:
+    tensorboard_log_dir: str = "outputs/rl_training/logs"
+    log_frequency: int = 100
+    save_video_frequency: Optional[int] = None
+    log_episode_return: bool = True
+    log_episode_length: bool = True
+    log_policy_loss: bool = True
+    log_value_loss: bool = True
+    log_entropy: bool = True
+    log_asteroid_visibility: bool = True
+    log_mean_error_angle: bool = True
+    log_gradient_norm: bool = True
+
+
+@dataclass
+class EvaluationArgs:
+    num_eval_episodes: int = 10
+    eval_frequency: int = 50_000
+    deterministic: bool = True
+    render_video: bool = True
+    video_dir: str = "outputs/rl_training/eval_videos"
+
+
+@dataclass
+class DeviceArgs:
+    device: str = "cuda"
+    mixed_precision: bool = False
+
+
+@dataclass
+class ReproducibilityArgs:
+    seed: int = 42
+    deterministic_torch: bool = True
+
+
+@dataclass
+class TrainArgs:
+    """Command line arguments for PPO training."""
+
     output_dir: Path = Path("outputs/rl_training")
     checkpoint: Optional[Path] = None
+    simulation: SimulationArgs = field(default_factory=SimulationArgs)
+    asteroid: AsteroidArgs = field(default_factory=AsteroidArgs)
+    flyby: FlybyArgs = field(default_factory=FlybyArgs)
+    spacecraft: SpacecraftArgs = field(default_factory=SpacecraftArgs)
+    controller: ControllerArgs = field(default_factory=ControllerArgs)
+    reaction_wheel: ReactionWheelArgs = field(default_factory=ReactionWheelArgs)
+    gyroscope: GyroscopeArgs = field(default_factory=GyroscopeArgs)
+    output: OutputArgs = field(default_factory=OutputArgs)
+    rl_environment: RLEnvironmentArgs = field(default_factory=RLEnvironmentArgs)
+    network: NetworkArgs = field(default_factory=NetworkArgs)
+    training: TrainingArgs = field(default_factory=TrainingArgs)
+    logging: LoggingArgs = field(default_factory=LoggingArgs)
+    evaluation: EvaluationArgs = field(default_factory=EvaluationArgs)
+    device: DeviceArgs = field(default_factory=DeviceArgs)
+    reproducibility: ReproducibilityArgs = field(default_factory=ReproducibilityArgs)
 
-
-def load_config(config_path: Path) -> dict:
-    """Load TOML configuration file.
-    
-    Parameters
-    ----------
-    config_path : Path
-        Path to .toml config file.
-    
-    Returns
-    -------
-    config : dict
-        Configuration dictionary.
-    """
-    with open(config_path, "r") as f:
-        config = toml.load(f)
-    return config
-
-
-def create_environment(config: dict) -> gym.Env:
+def create_environment(args: TrainArgs) -> gym.Env:
     """Create RL environment from config.
     
     Parameters
     ----------
-    config : dict
-        Configuration dictionary.
+    args : TrainArgs
+        Training arguments.
     
     Returns
     -------
     env : gym.Env
         Asteroid tracking environment.
     """
-    from .flyby_sim import FlybyRunConfig
+    from .asteroid_camera import NodeAsteroidCamera
+    from .flyby_sim import (
+        AsteroidConfig,
+        ControllerConfig,
+        FlybyConfig,
+        FlybyRunConfig,
+        OutputConfig,
+        ReactionWheelConfig,
+        SimulationConfig,
+        SpacecraftConfig,
+    )
     from .rl_env import AsteroidTrackingEnv, RLEnvironmentConfig
-    
-    # Build FlybyRunConfig from config
+
+    supported_asteroids = set(NodeAsteroidCamera.ASTEROID_SHAPE_DATASETS.keys())
+    asteroid_name = str(args.asteroid.asteroid)
+    if asteroid_name not in supported_asteroids:
+        supported_display = ", ".join(sorted(supported_asteroids))
+        raise ValueError(
+            f"Unsupported asteroid '{asteroid_name}'. Supported values: {supported_display}."
+        )
+
+    render_frequency = args.rl_environment.render_at_frequency
+    if render_frequency is None:
+        render_frequency = args.output.render_fps
+
+    rw_max_momentum = float(args.reaction_wheel.max_momentum_nms)
+    rw_max_torque = float(args.reaction_wheel.max_torque_nm)
+    rw_max_speed = float(args.reaction_wheel.max_speed_rps)
+    rw_inertia = float(args.reaction_wheel.inertia_kgm2)
+
     flyby_cfg = FlybyRunConfig(
-        sim=FlybyRunConfig.SimulationConfig(
-            sim_dt=config["simulation"]["sim_dt"],
-            start_date_utc=config["simulation"]["start_date_utc"],
-            duration_seconds=config["simulation"]["duration_seconds"],
+        sim=SimulationConfig(
+            dt_s=args.simulation.sim_dt,
+            start_date_utc=args.simulation.start_date_utc,
+            duration_s=args.simulation.duration_seconds,
         ),
-        asteroid=FlybyRunConfig.AsteroidConfig(
-            asteroid=config["asteroid"]["asteroid"],
-            gravity_lmax=config["asteroid"]["gravity_lmax"],
+        asteroid=AsteroidConfig(
+            asteroid=args.asteroid.asteroid,
+            gravity_lmax=args.asteroid.gravity_lmax,
         ),
-        # ... (fill in other configs as needed)
+        flyby=FlybyConfig(
+            periapsis_radius_m=args.flyby.periapsis_radius_m,
+            external_angle_deg=args.flyby.external_angle_deg,
+            true_anomaly0_deg=args.flyby.true_anomaly0_deg,
+            inbound_ra_deg=args.flyby.inbound_ra_deg,
+            inbound_dec_deg=args.flyby.inbound_dec_deg,
+            bplane_angle_deg=args.flyby.bplane_angle_deg,
+        ),
+        spacecraft=SpacecraftConfig(
+            inertia_kgm2=tuple(args.spacecraft.inertia_kgm2),
+            boresight_body=tuple(args.spacecraft.boresight_body),
+        ),
+        controller=ControllerConfig(
+            kp=args.controller.kp,
+            kd=args.controller.kd,
+            ki=args.controller.ki,
+            integral_limit=args.controller.integral_limit,
+        ),
+        rwa=ReactionWheelConfig(
+            wheel_inertia_kgm2=(rw_inertia, rw_inertia, rw_inertia),
+            torque_max_nm=(rw_max_torque, rw_max_torque, rw_max_torque),
+            wheel_speed_max_rads=(rw_max_speed, rw_max_speed, rw_max_speed),
+            momentum_max_nms=(rw_max_momentum, rw_max_momentum, rw_max_momentum),
+            command_lag_tau_s=args.reaction_wheel.command_lag_tau,
+            viscous_friction_nms=args.reaction_wheel.friction_viscous,
+            coulomb_friction_nm=args.reaction_wheel.friction_coulomb,
+        ),
+        output=OutputConfig(
+            output_dir=args.output.output_dir,
+            run_name=args.output.run_name,
+            render_video=args.output.render_video,
+            camera_width=args.output.camera_width,
+            camera_height=args.output.camera_height,
+            camera_fov_deg=args.output.camera_fov_deg,
+            render_fps=render_frequency,
+            spp=args.output.spp,
+        ),
     )
     
     # Build RLEnvironmentConfig
     rl_cfg = RLEnvironmentConfig(
-        camera_width=config["rl_environment"]["camera_width"],
-        camera_height=config["rl_environment"]["camera_height"],
-        camera_fov_deg=config["rl_environment"]["camera_fov_deg"],
-        max_steps=config["rl_environment"]["max_steps"],
-        max_steps_without_asteroid=config["rl_environment"]["max_steps_without_asteroid"],
-        asteroid_visibility_threshold=config["rl_environment"]["asteroid_visibility_threshold"],
-        torque_scale_nm=config["rl_environment"]["torque_scale_nm"],
-        gyro_history_length=config["rl_environment"]["gyro_history_length"],
-        render_at_frequency=config["rl_environment"]["render_at_frequency"],
+        camera_width=args.rl_environment.camera_width,
+        camera_height=args.rl_environment.camera_height,
+        camera_fov_deg=args.rl_environment.camera_fov_deg,
+        max_steps=args.rl_environment.max_steps,
+        max_steps_without_asteroid=args.rl_environment.max_steps_without_asteroid,
+        asteroid_visibility_threshold=args.rl_environment.asteroid_visibility_threshold,
+        torque_scale_nm=args.rl_environment.torque_scale_nm,
+        gyro_history_length=args.rl_environment.gyro_history_length,
+        render_at_frequency=args.rl_environment.render_at_frequency,
     )
     
     env = AsteroidTrackingEnv(flyby_config=flyby_cfg, rl_config=rl_cfg)
@@ -370,7 +573,7 @@ def create_environment(config: dict) -> gym.Env:
 
 
 def train(
-    config: dict,
+    args: TrainArgs,
     output_dir: Path,
     checkpoint_path: Optional[Path] = None,
 ):
@@ -378,32 +581,32 @@ def train(
     
     Parameters
     ----------
-    config : dict
-        Configuration dictionary.
+    args : TrainArgs
+        Training arguments.
     output_dir : Path
-        Output directory for logs and checkpoints.
-    checkpoint_path : Path, optional
-        Path to checkpoint to resume from.
+        Directory to save outputs and logs.
+    checkpoint_path : Optional[Path]
+        Path to checkpoint to resume from, if any.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Tensorboard logging
-    log_dir = output_dir / config["logging"]["tensorboard_log_dir"]
+    log_dir = output_dir / args.logging.tensorboard_log_dir
     log_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(str(log_dir))
     
-    # Save config
-    config_path = output_dir / "config.toml"
-    with open(config_path, "w") as f:
-        toml.dump(config, f)
-    logger.info(f"Config saved to {config_path}")
+    # Save resolved configuration as an artifact for reproducibility.
+    config_path = output_dir / "config_snapshot.txt"
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(repr(args))
+    logger.info(f"Resolved config snapshot saved to {config_path}")
     
     # Setup device
-    device = torch.device(config["device"]["device"])
+    device = torch.device(args.device.device)
     logger.info(f"Training on device: {device}")
     
-    if config["reproducibility"].get("deterministic_torch", False):
+    if args.reproducibility.deterministic_torch:
         try:
             torch.use_deterministic_algorithms(True)
             if device.type == "cuda":
@@ -413,14 +616,14 @@ def train(
             logger.warning(f"Could not enable fully deterministic PyTorch mode: {exc}")
     
     # Set seeds
-    seed = config["reproducibility"]["seed"]
+    seed = args.reproducibility.seed
     torch.manual_seed(seed)
     np.random.seed(seed)
     
     # Create environments
-    num_envs = max(1, int(config["training"]["num_envs"]))
+    num_envs = max(1, int(args.training.num_envs))
     logger.info(f"Creating {num_envs} environment(s)...")
-    envs = [create_environment(config) for _ in range(num_envs)]
+    envs = [create_environment(args) for _ in range(num_envs)]
     current_obs = [env.reset()[0] for env in envs]
     episode_returns = [0.0 for _ in range(num_envs)]
     episode_lengths = [0 for _ in range(num_envs)]
@@ -430,15 +633,15 @@ def train(
     # Create networks
     logger.info("Creating policy network...")
     policy_net = ViTGyroPolicy(
-        image_size=config["rl_environment"]["camera_height"],
-        vit_model=config["network"]["vit_model"],
-        vit_pretrained=config["network"]["vit_pretrained"],
-        vit_freeze_depth=config["network"]["vit_freeze_depth"],
-        temporal_attention_heads=config["network"]["temporal_attention_heads"],
-        temporal_attention_dim=config["network"]["temporal_attention_dim"],
-        hidden_dim=config["network"]["hidden_dim"],
+        image_size=args.rl_environment.camera_height,
+        vit_model=args.network.vit_model,
+        vit_pretrained=args.network.vit_pretrained,
+        vit_freeze_depth=args.network.vit_freeze_depth,
+        temporal_attention_heads=args.network.temporal_attention_heads,
+        temporal_attention_dim=args.network.temporal_attention_dim,
+        hidden_dim=args.network.hidden_dim,
         action_dim=3,
-        action_std_init=config["network"].get("action_std_init", 0.5),
+        action_std_init=args.network.action_std_init,
     ).to(device)
     
     # PPO modules
@@ -446,23 +649,25 @@ def train(
     ppo_loss = ClipPPOLoss(
         actor,
         critic,
-        clip_epsilon=config["training"]["ppo_clip_ratio"],
-        entropy_coeff=config["training"]["entropy_coeff"],
-        critic_coeff=config["training"]["value_coeff"],
+        clip_epsilon=args.training.ppo_clip_ratio,
+        entropy_coeff=args.training.entropy_coeff,
+        critic_coeff=args.training.value_coeff,
         normalize_advantage=True,
     )
     ppo_loss.make_value_estimator(
         ValueEstimators.GAE,
-        gamma=config["training"]["gamma"],
-        lmbda=config["training"]["gae_lambda"],
+        gamma=args.training.gamma,
+        lmbda=args.training.gae_lambda,
         deactivate_vmap=True,
     )
     
     # Optimizer
     optimizer = torch.optim.Adam(
         policy_net.parameters(),
-        lr=config["training"]["learning_rate"],
+        lr=args.training.learning_rate,
     )
+
+    step_count = 0
     
     # Resume from checkpoint if requested
     if checkpoint_path is not None:
@@ -476,7 +681,6 @@ def train(
             logger.warning(f"Checkpoint not found: {checkpoint_path}")
     
     # Training loop
-    step_count = 0
     episode_count = 0
     best_return = -np.inf
     steps_without_improvement = 0
@@ -484,8 +688,8 @@ def train(
     logger.info("Starting training...")
     
     try:
-        while step_count < config["training"]["max_steps"]:
-            rollout_steps = int(config["training"]["steps_per_rollout"])
+        while step_count < args.training.max_steps:
+            rollout_steps = int(args.training.steps_per_rollout)
             batch_actions = []
             batch_action_log_probs = []
             batch_rewards = []
@@ -591,9 +795,9 @@ def train(
             
             total_loss = 0.0
             shuffled_indices = torch.randperm(num_transitions, device=device)
-            for epoch in range(int(config["training"]["num_epochs"])):
-                for start in range(0, num_transitions, int(config["training"]["batch_size"])):
-                    batch_idx = shuffled_indices[start : start + int(config["training"]["batch_size"])]
+            for epoch in range(int(args.training.num_epochs)):
+                for start in range(0, num_transitions, int(args.training.batch_size)):
+                    batch_idx = shuffled_indices[start : start + int(args.training.batch_size)]
                     minibatch = batch.view(-1)[batch_idx]
                     loss_out = ppo_loss(minibatch)
                     loss_values = [loss_out["loss_objective"].mean()]
@@ -604,7 +808,7 @@ def train(
                     loss = sum(loss_values)
                     optimizer.zero_grad()
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(policy_net.parameters(), config["training"]["grad_clip_norm"])
+                    torch.nn.utils.clip_grad_norm_(policy_net.parameters(), args.training.grad_clip_norm)
                     optimizer.step()
                     total_loss += loss.item()
             
@@ -612,16 +816,16 @@ def train(
             avg_return = float(np.mean(recent_episode_returns)) if recent_episode_returns else 0.0
             avg_length = float(np.mean(recent_episode_lengths)) if recent_episode_lengths else 0.0
             
-            if step_count % config["logging"]["log_frequency"] == 0:
+            if step_count % args.logging.log_frequency == 0:
                 writer.add_scalar("train/step", step_count, step_count)
-                writer.add_scalar("train/ppo/loss", total_loss / max(1, int(config["training"]["num_epochs"]) * (num_transitions // int(config["training"]["batch_size"]))), step_count)
+                writer.add_scalar("train/ppo/loss", total_loss / max(1, int(args.training.num_epochs) * (num_transitions // int(args.training.batch_size))), step_count)
                 writer.add_scalar("train/episode/return", avg_return, step_count)
                 writer.add_scalar("train/episode/length", avg_length, step_count)
                 logger.info(
-                    f"Step {step_count}/{config['training']['max_steps']} | avg_return={avg_return:.3f} | avg_length={avg_length:.1f}"
+                    f"Step {step_count}/{args.training.max_steps} | avg_return={avg_return:.3f} | avg_length={avg_length:.1f}"
                 )
             
-            if step_count % config["training"]["checkpoint_frequency"] == 0:
+            if step_count % args.training.checkpoint_frequency == 0:
                 checkpoint_path = output_dir / "checkpoints" / f"policy_step_{step_count}.pt"
                 checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
                 torch.save({
@@ -641,14 +845,7 @@ def train(
 def main() -> int:
     """Main entry point."""
     args = tyro.cli(TrainArgs)
-    
-    if not args.config.exists():
-        logger.error(f"Config file not found: {args.config}")
-        return 1
-    
-    config = load_config(args.config)
-    logger.info(f"Loaded config from {args.config}")
-    train(config, args.output_dir, checkpoint_path=args.checkpoint)
+    train(args, args.output_dir, checkpoint_path=args.checkpoint)
     return 0
 
 

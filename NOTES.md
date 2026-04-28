@@ -1,3 +1,9 @@
+TODO
+- Parallel MONSID simulation for fault detection in the flyby scenario
+- Neurosymbolic investigation
+- RL training and benchmarking
+- Fault tollerance in RL (look at papers you already found which suggest methods for this)
+
 Hello everyone,
 
  

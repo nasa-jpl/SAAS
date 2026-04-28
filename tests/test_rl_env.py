@@ -1,22 +1,63 @@
 """Unit tests for RL environment wrapper."""
 
 import numpy as np
-import pytest
 
 from asteroid_flyby_syssim.flyby_sim import FlybyRunConfig
 from asteroid_flyby_syssim.rl_env import AsteroidTrackingEnv, RLEnvironmentConfig
+from asteroid_flyby_syssim import flyby_sim
+from asteroid_flyby_syssim import asteroid_camera
 
 
 def test_env_reset():
     """Test environment reset functionality."""
-    # Create minimal config
-    rl_config = RLEnvironmentConfig(max_steps=100)
-    
-    # Create dummy flyby config (would need full config for real test)
-    # For now, just test the environment interface
-    
-    # Skip full integration test for now (requires asteroid models)
-    pytest.skip("Requires full asteroid model setup")
+    class DummyCamera:
+        def __init__(self, **kwargs):
+            self._kwargs = kwargs
+            self.frequency = 1.0
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(asteroid_camera, "NodeAsteroidCamera", DummyCamera)
+    monkeypatch.setattr(flyby_sim, "NodeAsteroidCamera", DummyCamera)
+
+    captured = {}
+
+    def fake_build(cfg):
+        captured["cfg"] = cfg
+
+        class DummySystem:
+            def initialize(self):
+                pass
+
+            def finalize(self):
+                pass
+
+            def step(self, dt):
+                pass
+
+            def get_node(self, name):
+                return None
+
+        return DummySystem(), None
+
+    monkeypatch.setattr(flyby_sim, "build_flyby_rl_system", fake_build)
+
+    flyby_cfg = FlybyRunConfig()
+    flyby_cfg.output.camera_width = 32
+    flyby_cfg.output.camera_height = 32
+    rl_config = RLEnvironmentConfig(
+        camera_width=32,
+        camera_height=32,
+        max_steps=5,
+        render_at_frequency=7.0,
+    )
+    env = AsteroidTrackingEnv(flyby_config=flyby_cfg, rl_config=rl_config)
+
+    obs, info = env.reset()
+    assert obs["image"].shape == (32, 32, 3)
+    assert obs["gyro_history"].shape == (4, 3)
+    assert "cfg" in captured
+    env.close()
+    monkeypatch.undo()
 
 
 def test_observation_space():

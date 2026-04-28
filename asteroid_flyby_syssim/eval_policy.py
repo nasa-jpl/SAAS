@@ -23,7 +23,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from .train_ppo import ViTGyroPolicy, load_config, create_environment
+from .train_ppo import TrainArgs, ViTGyroPolicy, load_config, create_environment
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -140,7 +140,7 @@ def run_episode(
 
 def evaluate(
     checkpoint_path: Path,
-    config: dict,
+    config: TrainArgs,
     num_episodes: int = 10,
     output_dir: Optional[Path] = None,
     deterministic: bool = True,
@@ -152,8 +152,8 @@ def evaluate(
     ----------
     checkpoint_path : Path
         Path to checkpoint file.
-    config : dict
-        Configuration dictionary.
+    config : TrainArgs
+        Training arguments.
     num_episodes : int
         Number of evaluation episodes.
     output_dir : Path, optional
@@ -164,18 +164,18 @@ def evaluate(
         Save render videos (if env supports it).
     """
     # Setup device
-    device = torch.device(config["device"]["device"])
+    device = torch.device(config.device.device)
     
     # Load policy
     logger.info(f"Loading policy from {checkpoint_path}...")
     policy_net = ViTGyroPolicy(
-        image_size=config["rl_environment"]["camera_height"],
-        vit_model=config["network"]["vit_model"],
-        vit_pretrained=config["network"]["vit_pretrained"],
-        vit_freeze_depth=config["network"]["vit_freeze_depth"],
-        temporal_attention_heads=config["network"]["temporal_attention_heads"],
-        temporal_attention_dim=config["network"]["temporal_attention_dim"],
-        hidden_dim=config["network"]["hidden_dim"],
+        image_size=config.rl_environment.camera_height,
+        vit_model=config.network.vit_model,
+        vit_pretrained=config.network.vit_pretrained,
+        vit_freeze_depth=config.network.vit_freeze_depth,
+        temporal_attention_heads=config.network.temporal_attention_heads,
+        temporal_attention_dim=config.network.temporal_attention_dim,
+        hidden_dim=config.network.hidden_dim,
         action_dim=3,
     ).to(device)
     policy_net.eval()

@@ -206,6 +206,11 @@ class AsteroidTrackingEnv(gym.Env):
         self._attitude_output = self._system.get_node("rl_attitude_output")
         self._position_output = self._system.get_node("rl_position_output")
 
+        # Optional camera render throttling for training speed.
+        camera_node = self._system.get_node("camera")
+        if camera_node is not None and self.rl_config.render_at_frequency is not None:
+            camera_node.frequency = float(self.rl_config.render_at_frequency)
+
         if self._rl_action_input is not None:
             self._rl_action_input.value = np.zeros(3, dtype=float)
 
@@ -327,9 +332,10 @@ class AsteroidTrackingEnv(gym.Env):
         if image is not None:
             if image.dtype != np.uint8:
                 image = np.clip(image * 255, 0, 255).astype(np.uint8)
+            self._last_frame = image
             return image
-        
-        return None
+
+        return self._last_frame
     
     def _compute_reward(self) -> tuple[float, dict]:
         """Compute step reward and info dict.
@@ -438,8 +444,8 @@ class AsteroidTrackingEnv(gym.Env):
         return False
     
     def render(self):
-        """Render environment (not implemented for RL training)."""
-        pass
+        """Return latest RGB frame for Gymnasium-compatible rendering."""
+        return self._last_frame
     
     def close(self):
         """Close environment and clean up."""
