@@ -12,6 +12,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 import importlib
 
@@ -37,6 +39,85 @@ try:
 except ImportError as e:
     print(f"Error: timm not installed. Install with: pip install timm")
     sys.exit(1)
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class ParallelEnvExecutor:
+    """Execute environment steps in parallel using thread pool.
+    
+    This executor manages concurrent environment stepping to improve throughput.
+    Each environment runs in a separate thread, allowing efficient parallelization
+    of I/O-bound simulation operations.
+    """
+    
+    def __init__(self, envs: list, max_workers: Optional[int] = None):
+        """Initialize parallel executor.
+        
+        Parameters
+        ----------
+        envs : list
+            List of gymnasium environments to manage.
+        max_workers : int, optional
+            Maximum number of worker threads. If None, uses len(envs).
+        """
+        self.envs = envs
+        self.num_envs = len(envs)
+        self.max_workers = max_workers or len(envs)
+        self._lock = threading.Lock()
+        
+    def step_all(self, actions: np.ndarray) -> tuple[list, list, list, list, list]:
+        """Step all environments in parallel.
+        
+        Parameters
+        ----------
+        actions : np.ndarray
+            Actions for each environment [num_envs, action_dim].
+        
+        Returns
+        -------
+        observations : list
+            List of observations from each environment.
+        rewards : list
+            List of rewards from each environment.
+        terminateds : list
+            List of terminated flags.
+        truncateds : list
+            List of truncated flags.
+        infos : list
+            List of info dicts.
+        """
+        def step_env(env_idx: int, action: np.ndarray):
+            env = self.envs[env_idx]
+            try:
+                obs, reward, terminated, truncated, info = env.step(action)
+                return env_idx, (obs, reward, terminated, truncated, info)
+            except Exception as e:
+                logger.error(f"Error stepping environment {env_idx}: {e}")
+                raise
+        
+        results = [None] * self.num_envs
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {}
+            for env_idx in range(self.num_envs):
+                future = executor.submit(step_env, env_idx, actions[env_idx])
+                futures[future] = env_idx
+            
+            for future in as_completed(futures):
+                env_idx, result = future.result()
+                results[env_idx] = result
+        
+        # Unpack results
+        observations = [r[0] for r in results]
+        rewards = [r[1] for r in results]
+        terminateds = [r[2] for r in results]
+        truncateds = [r[3] for r in results]
+        infos = [r[4] for r in results]
+        
+        return observations, rewards, terminateds, truncateds, infos
+
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -656,6 +737,9 @@ def train(
     recent_episode_returns: list[float] = []
     recent_episode_lengths: list[int] = []
     
+    # Create parallel environment executor
+    env_executor = ParallelEnvExecutor(envs, max_workers=num_envs)
+    
     # Create networks
     logger.info("Creating policy network...")
     policy_net = ViTGyroPolicy(
@@ -730,9 +814,15 @@ def train(
                 actions = dist.rsample().clamp(-1.0, 1.0)
                 action_log_probs = dist.log_prob(actions).unsqueeze(-1)
                 
-                for env_idx, env in enumerate(envs):
-                    action = actions[env_idx].cpu().numpy()
-                    obs, reward, terminated, truncated, info = env.step(action)
+                # Step all environments in parallel
+                actions_np = actions.cpu().numpy()
+                observations, rewards, terminateds, truncateds, infos = env_executor.step_all(actions_np)
+                
+                for env_idx in range(num_envs):
+                    obs = observations[env_idx]
+                    reward = rewards[env_idx]
+                    terminated = terminateds[env_idx]
+                    truncated = truncateds[env_idx]
                     done = bool(terminated or truncated)
                     
                     batch_observations.append(current_obs[env_idx])
@@ -757,7 +847,7 @@ def train(
                             steps_without_improvement += 1
                         episode_returns[env_idx] = 0.0
                         episode_lengths[env_idx] = 0
-                        obs, _ = env.reset()
+                        obs, _ = envs[env_idx].reset()
                     
                     current_obs[env_idx] = obs
                 

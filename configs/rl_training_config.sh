@@ -2,7 +2,7 @@
 set -euo pipefail
 
 python -m asteroid_flyby_syssim.train_ppo \
-  --output-dir outputs/rl_training \
+  --output-dir /tmp/outputs/rl_training \
   --simulation.sim-dt 0.01 \
   --simulation.start-date-utc 2024-01-01T00:00:00 \
   --simulation.duration-seconds 3600.0 \
@@ -32,15 +32,15 @@ python -m asteroid_flyby_syssim.train_ppo \
   --gyroscope.white-noise-std-rad-s 1e-4 \
   --gyroscope.bias-random-walk-std-rad-s2 1e-6 \
   --gyroscope.sample-rate-hz 100.0 \
-  --output.output-dir outputs/rl_training \
+  --output.output-dir /tmp/outputs/rl_training \
   --output.run-name ast_track_01 \
-  --output.render-video False \
+  --output.no-render-video \
   --output.camera-width 128 \
   --output.camera-height 128 \
   --output.camera-fov-deg 50.0 \
   --output.render-fps 10.0 \
   --output.spp 2 \
-  --output.use-integrator-mask False \
+  --output.no-use-integrator-mask \
   --rl-environment.camera-width 128 \
   --rl-environment.camera-height 128 \
   --rl-environment.camera-fov-deg 50.0 \
@@ -50,7 +50,7 @@ python -m asteroid_flyby_syssim.train_ppo \
   --rl-environment.torque-scale-nm 1.0 \
   --rl-environment.gyro-history-length 4 \
   --rl-environment.render-at-frequency None \
-  --rl-environment.randomize-on-reset True \
+  --rl-environment.randomize-on-reset \
   --rl-environment.periapsis-radius-scale-range 0.8 1.2 \
   --rl-environment.external-angle-offset-deg-range -20.0 20.0 \
   --rl-environment.true-anomaly0-offset-deg-range -45.0 45.0 \
@@ -59,7 +59,7 @@ python -m asteroid_flyby_syssim.train_ppo \
   --rl-environment.bplane-angle-offset-deg-range -30.0 30.0 \
   --rl-environment.start-datetime-jitter-hours 24.0 \
   --network.vit-model vit_tiny \
-  --network.vit-pretrained True \
+  --network.vit-pretrained \
   --network.vit-freeze-depth 6 \
   --network.temporal-attention-heads 4 \
   --network.temporal-attention-dim 64 \
@@ -83,23 +83,23 @@ python -m asteroid_flyby_syssim.train_ppo \
   --training.checkpoint-frequency 10000 \
   --training.early-stopping-patience 20 \
   --training.early-stopping-threshold 0.95 \
-  --logging.tensorboard-log-dir outputs/rl_training/logs \
+  --logging.tensorboard-log-dir /tmp/rl_training/logs \
   --logging.log-frequency 100 \
   --logging.save-video-frequency None \
-  --logging.log-episode-return True \
-  --logging.log-episode-length True \
-  --logging.log-policy-loss True \
-  --logging.log-value-loss True \
-  --logging.log-entropy True \
-  --logging.log-asteroid-visibility True \
-  --logging.log-mean-error-angle True \
-  --logging.log-gradient-norm True \
+  --logging.log-episode-return \
+  --logging.log-episode-length \
+  --logging.log-policy-loss \
+  --logging.log-value-loss \
+  --logging.log-entropy \
+  --logging.log-asteroid-visibility \
+  --logging.log-mean-error-angle \
+  --logging.log-gradient-norm \
   --evaluation.num-eval-episodes 10 \
   --evaluation.eval-frequency 50000 \
-  --evaluation.deterministic True \
-  --evaluation.render-video True \
-  --evaluation.video-dir outputs/rl_training/eval_videos \
+  --evaluation.deterministic \
+  --evaluation.render-video \
+  --evaluation.video-dir /tmp/rl_training/eval_videos \
   --device.device cuda \
-  --device.mixed-precision False \
+  --device.no-mixed-precision \
   --reproducibility.seed 42 \
-  --reproducibility.deterministic-torch True
+  --reproducibility.deterministic-torch

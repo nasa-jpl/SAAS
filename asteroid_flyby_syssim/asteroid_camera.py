@@ -8,6 +8,8 @@ import drjit as dr
 import struct
 import platformdirs
 import os
+import pickle
+from pathlib import Path
 from datetime import datetime, timezone
 
 from syssim.core import Node, InputPort, OutputPort
@@ -60,6 +62,92 @@ try:
     HAS_SKYFIELD = True
 except ImportError:
     HAS_SKYFIELD = False
+
+
+# Global in-memory cache for asteroid shape models to avoid redundant loading
+_ASTEROID_SHAPE_CACHE = {}
+
+
+def _get_shape_cache_dir() -> Path:
+    """Get the system cache directory for asteroid shape models."""
+    cache_dir = Path(platformdirs.user_cache_dir("asteroid-flyby-syssim", "saas"))
+    shape_cache_dir = cache_dir / "asteroid_shape_models"
+    shape_cache_dir.mkdir(parents=True, exist_ok=True)
+    return shape_cache_dir
+
+
+def _get_cached_shape_model(asteroid: str, lmax: int = 180):
+    """Get or load asteroid shape model from cache (disk + memory).
+    
+    Caching strategy:
+    1. Check in-memory cache first
+    2. Check disk cache next
+    3. Load from pyshtools and save to disk if not cached
+    
+    Parameters
+    ----------
+    asteroid : str
+        Asteroid name ('Ceres', 'Vesta', or 'Eros').
+    lmax : int
+        Maximum degree of spherical harmonics expansion (default: 180).
+    
+    Returns
+    -------
+    shape_grid
+        Expanded shape grid from pyshtools.
+    mean_radius_m : float
+        Mean radius of asteroid in meters.
+    """
+    cache_key = (asteroid, lmax)
+    
+    # Check in-memory cache first
+    if cache_key in _ASTEROID_SHAPE_CACHE:
+        return _ASTEROID_SHAPE_CACHE[cache_key]
+    
+    # Check disk cache
+    cache_dir = _get_shape_cache_dir()
+    cache_file = cache_dir / f"{asteroid}_lmax{lmax}.pkl"
+    
+    if cache_file.exists():
+        try:
+            with open(cache_file, "rb") as f:
+                cached_data = pickle.load(f)
+                shape_grid = cached_data["shape_grid"]
+                mean_radius_m = cached_data["mean_radius_m"]
+                _ASTEROID_SHAPE_CACHE[cache_key] = (shape_grid, mean_radius_m)
+                return shape_grid, mean_radius_m
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to load cached shape model from {cache_file}: {e}. Reloading from pyshtools.")
+    
+    # Load from pyshtools and save to cache
+    if asteroid == "Ceres":
+        shape_model = pysh.datasets.Ceres.DLR_SPG_shape(lmax=lmax)
+    elif asteroid == "Vesta":
+        shape_model = pysh.datasets.Vesta.DLR_SPG_shape(lmax=lmax)
+    elif asteroid == "Eros":
+        shape_model = pysh.datasets.Eros.NLR_shape(lmax=lmax)
+    else:
+        raise ValueError(f"Unknown asteroid: {asteroid}")
+    
+    shape_grid = shape_model.expand(grid="DH2")
+    mean_radius_m = float(np.mean(shape_grid.data))
+    
+    # Save to disk cache
+    try:
+        with open(cache_file, "wb") as f:
+            pickle.dump({
+                "shape_grid": shape_grid,
+                "mean_radius_m": mean_radius_m
+            }, f)
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to save shape model cache to {cache_file}: {e}")
+    
+    # Store in memory cache
+    _ASTEROID_SHAPE_CACHE[cache_key] = (shape_grid, mean_radius_m)
+    
+    return shape_grid, mean_radius_m
 
 
 class NodeAsteroidCameraInputs(NamedTuple):
@@ -220,21 +308,10 @@ class NodeAsteroidCamera(Node):
         super().__init__(self._i, self._o, self._p, **kwargs)
 
     def _load_shape_model(self):
-        """Load asteroid shape model from pyshtools."""
+        """Load asteroid shape model from pyshtools (cached)."""
         asteroid = self._p.asteroid.value
-
-        # Load shape dataset with moderate resolution for rendering
-        if asteroid == "Ceres":
-            # Use moderate lmax for reasonable mesh size
-            self._shape_model = pysh.datasets.Ceres.DLR_SPG_shape(lmax=180)
-        elif asteroid == "Vesta":
-            self._shape_model = pysh.datasets.Vesta.DLR_SPG_shape(lmax=180)
-        elif asteroid == "Eros":
-            self._shape_model = pysh.datasets.Eros.NLR_shape(lmax=180)
-
-        # Expand to grid
-        self._shape_grid = self._shape_model.expand(grid="DH2")
-        self._mean_radius_m = float(np.mean(self._shape_grid.data))
+        self._shape_lmax = 180
+        self._shape_grid, self._mean_radius_m = _get_cached_shape_model(asteroid, lmax=self._shape_lmax)
 
     def _create_mesh_from_shape(self):
         """Create a triangle mesh from the spherical-harmonic shape grid
@@ -275,10 +352,15 @@ class NodeAsteroidCamera(Node):
         # ------------------------------------------------------------------
         # 2️⃣  Query shape model at each point
         # ------------------------------------------------------------------
-        # Evaluate shape model at the Fibonacci points (convert to float for pyshtools)
-        radii = np.zeros(n_points, dtype=np.float64)
-        for i in range(n_points):
-            radii[i] = self._shape_model.expand(lat=float(lat[i]), lon=float(lon[i]))
+        # Sample the cached DH2 grid directly (nearest-neighbor lookup) to avoid
+        # repeated spherical-harmonic expansions at startup.
+        grid = np.asarray(self._shape_grid.data, dtype=np.float64)
+        n_lat, n_lon = grid.shape
+        lat_idx = np.rint((90.0 - lat) / 180.0 * (n_lat - 1)).astype(np.int64)
+        lon_idx = np.rint((lon % 360.0) / 360.0 * (n_lon - 1)).astype(np.int64)
+        lat_idx = np.clip(lat_idx, 0, n_lat - 1)
+        lon_idx = np.mod(lon_idx, n_lon)
+        radii = grid[lat_idx, lon_idx]
         
         # ------------------------------------------------------------------
         # 3️⃣  Convert to Cartesian coordinates with actual radii
@@ -360,7 +442,7 @@ class NodeAsteroidCamera(Node):
         
         # Create filename based on asteroid and shape model resolution
         asteroid = self._p.asteroid.value
-        lmax = self._shape_model.lmax
+        lmax = int(self._shape_lmax)
         ply_filename = f"asteroid_{asteroid.lower()}_lmax{lmax}_binary_v2.ply"
         ply_path = os.path.join(cache_dir, ply_filename)
         
