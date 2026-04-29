@@ -141,6 +141,10 @@ class NodeGyroscope(Node):
         self._rng = np.random.default_rng(self._rng_seed)
         self._bias_drift = np.array([0.0, 0.0, 0.0], dtype=float)
 
+    def reset_state(self):
+        self._rng = np.random.default_rng(self._rng_seed)
+        self._bias_drift = np.array([0.0, 0.0, 0.0], dtype=float)
+
     def update(self, sim_time: float):
         """Update gyroscope measurement.
 

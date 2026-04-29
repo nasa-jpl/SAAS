@@ -50,6 +50,19 @@ def _normalize(v: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     return v / n
 
 
+def _normalize_quaternion_wxyz(q_wxyz: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """Return a unit quaternion; fall back to identity for invalid inputs."""
+    q = np.asarray(q_wxyz, dtype=float)
+    if q.shape != (4,):
+        q = q.reshape(4)
+    if not np.all(np.isfinite(q)):
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
+    n = np.linalg.norm(q)
+    if n < eps:
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
+    return q / n
+
+
 def _quat_wxyz_to_xyzw(q_wxyz: np.ndarray) -> np.ndarray:
     q_wxyz = np.asarray(q_wxyz, dtype=float)
     return np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], dtype=float)
@@ -61,7 +74,7 @@ def _quat_xyzw_to_wxyz(q_xyzw: np.ndarray) -> np.ndarray:
 
 
 def _rotation_from_wxyz(q_wxyz: np.ndarray) -> Rotation:
-    q_wxyz = _normalize(np.asarray(q_wxyz, dtype=float))
+    q_wxyz = _normalize_quaternion_wxyz(q_wxyz)
     return Rotation.from_quat(_quat_wxyz_to_xyzw(q_wxyz))
 
 
@@ -346,6 +359,12 @@ class NodeHyperbolicDynamics(NodeDifferential):
         self._last_gravity_accel = np.zeros(3, dtype=float)
         self._last_gravity_error = np.zeros(3, dtype=float)
 
+    def reset_state(self, x0: np.ndarray, sim_time: float = 0.0):
+        self._x = np.array(x0, dtype=float)
+        self._t = float(sim_time)
+        self._last_gravity_accel = np.zeros(3, dtype=float)
+        self._last_gravity_error = np.zeros(3, dtype=float)
+
     def update(self, sim_time: float):
         dt = sim_time - self._t
         if dt <= 0.0:
@@ -527,6 +546,10 @@ class NodeAttitudeController(NodeDifferential):
     def initialize(self):
         self._t = 0.0
 
+    def reset_state(self, sim_time: float = 0.0):
+        self._x = np.zeros(3, dtype=float)
+        self._t = float(sim_time)
+
     def update(self, sim_time: float):
         q_cmd_bi = self._i.q_cmd.read()
         q_bi = self._i.q.read()
@@ -655,6 +678,12 @@ class NodeReactionWheel(NodeDifferential):
 
     def initialize(self):
         self._t = 0.0
+        self._tau_cmd_lagged = 0.0
+        self._rng = np.random.default_rng(7 + self._wheel_idx)
+
+    def reset_state(self, omega_rads: float = 0.0, sim_time: float = 0.0):
+        self._x = np.array([omega_rads], dtype=float)
+        self._t = float(sim_time)
         self._tau_cmd_lagged = 0.0
         self._rng = np.random.default_rng(7 + self._wheel_idx)
 
@@ -804,6 +833,10 @@ class NodeAttitudeDynamics(NodeDifferential):
     def initialize(self):
         self._t = 0.0
 
+    def reset_state(self, x0: np.ndarray, sim_time: float = 0.0):
+        self._x = np.array(x0, dtype=float)
+        self._t = float(sim_time)
+
     def update(self, sim_time: float):
         dt = sim_time - self._t
         if dt <= 0.0:
@@ -816,8 +849,17 @@ class NodeAttitudeDynamics(NodeDifferential):
         if h_rw is None:
             h_rw = np.zeros(3, dtype=float)
 
-        q = _normalize(self._x[0:4])
-        w = self._x[4:7]
+        q = _normalize_quaternion_wxyz(self._x[0:4])
+        w = np.asarray(self._x[4:7], dtype=float)
+        if not np.all(np.isfinite(w)):
+            w = np.zeros(3, dtype=float)
+
+        tau = np.asarray(tau, dtype=float)
+        h_rw = np.asarray(h_rw, dtype=float)
+        if not np.all(np.isfinite(tau)):
+            tau = np.zeros(3, dtype=float)
+        if not np.all(np.isfinite(h_rw)):
+            h_rw = np.zeros(3, dtype=float)
 
         ang_acc = self._j_inv @ (tau - np.cross(w, self._j @ w + h_rw))
 
@@ -828,7 +870,7 @@ class NodeAttitudeDynamics(NodeDifferential):
         r_bi = _rotation_from_wxyz(q)
         delta_r = Rotation.from_rotvec(w_new * dt)
         q_new = _wxyz_from_rotation(r_bi * delta_r)
-        q_new = _normalize(q_new)
+        q_new = _normalize_quaternion_wxyz(q_new)
 
         self._x = np.concatenate([q_new, w_new])
         self._t = sim_time

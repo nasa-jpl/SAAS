@@ -1,6 +1,6 @@
 """Asteroid camera rendering using Mitsuba 3 and pyshtools shape models."""
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 import numpy as np
 import pyshtools as pysh
 import mitsuba as mi
@@ -66,6 +66,10 @@ except ImportError:
 
 # Global in-memory cache for asteroid shape models to avoid redundant loading
 _ASTEROID_SHAPE_CACHE = {}
+
+# Process-level cache for Skyfield resources keyed by cache directory.
+_SKYFIELD_RESOURCE_CACHE: dict[str, dict[str, Any]] = {}
+_SUN_DIRECTION_CACHE: dict[str, np.ndarray] = {}
 
 
 def _get_shape_cache_dir() -> Path:
@@ -148,6 +152,62 @@ def _get_cached_shape_model(asteroid: str, lmax: int = 180):
     _ASTEROID_SHAPE_CACHE[cache_key] = (shape_grid, mean_radius_m)
     
     return shape_grid, mean_radius_m
+
+
+def _load_mpc_dataframe(cache_dir: str, load: Any):
+    """Load MPC minor-planet dataframe from cache dir once per process."""
+    if not HAS_SKYFIELD:
+        return None
+
+    mpc_file = os.path.join(cache_dir, "MPCORB.DAT")
+    if not os.path.exists(mpc_file):
+        gz_path = mpc_file + ".gz"
+        if not os.path.exists(gz_path):
+            download(mpc.MPCORB_URL, path=gz_path)
+        if os.path.exists(gz_path):
+            import gzip
+            with gzip.open(gz_path, "rb") as f_in:
+                with open(mpc_file, "wb") as f_out:
+                    f_out.write(f_in.read())
+            os.remove(gz_path)
+
+        # Skip MPC header section; table parsing expects data rows.
+        with open(mpc_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        with open(mpc_file, "w", encoding="utf-8") as f:
+            f.writelines(lines[43:])
+
+    with load.open(mpc_file) as f:
+        minor_planets = mpc.load_mpcorb_dataframe(f)
+
+    bad_orbits = minor_planets.semimajor_axis_au.isnull()
+    minor_planets = minor_planets[~bad_orbits]
+    return minor_planets.set_index("designation", drop=False)
+
+
+def _get_skyfield_resources(cache_dir: str) -> dict[str, Any]:
+    """Get shared Skyfield resources for the given cache directory."""
+    if not HAS_SKYFIELD:
+        return {
+            "load": None,
+            "timescale": None,
+            "ephemeris": None,
+            "minor_planets": None,
+        }
+
+    cached = _SKYFIELD_RESOURCE_CACHE.get(cache_dir)
+    if cached is not None:
+        return cached
+
+    load = Loader(cache_dir, verbose=False)
+    resources = {
+        "load": load,
+        "timescale": load.timescale(),
+        "ephemeris": load("de421.bsp"),
+        "minor_planets": _load_mpc_dataframe(cache_dir=cache_dir, load=load),
+    }
+    _SKYFIELD_RESOURCE_CACHE[cache_dir] = resources
+    return resources
 
 
 class NodeAsteroidCameraInputs(NamedTuple):
@@ -286,14 +346,13 @@ class NodeAsteroidCamera(Node):
 
         self._cache_dir = platformdirs.user_cache_dir("syssim-smad", "saas")
         os.makedirs(self._cache_dir, exist_ok=True)
-        
-        # Load skyfield data
-        self._load = Loader(self._cache_dir)
-        self._ts = self._load.timescale()
-        self._eph = self._load('de421.bsp')
-        
-        # Load MPC minor planet data
-        self._minor_planets = self._load_mpc_data()
+
+        # Load shared Skyfield resources once per process/cache directory.
+        skyfield_resources = _get_skyfield_resources(self._cache_dir)
+        self._load = skyfield_resources["load"]
+        self._ts = skyfield_resources["timescale"]
+        self._eph = skyfield_resources["ephemeris"]
+        self._minor_planets = skyfield_resources["minor_planets"]
         
         # Compute sun direction in J2000 frame
         self._sun_direction = self._compute_sun_direction()
@@ -499,40 +558,9 @@ class NodeAsteroidCamera(Node):
         """
         if not HAS_SKYFIELD:
             return None
-        
-        try:
-            print("  Loading MPC minor planet data...")
-            # Check if MPCORB.DAT is already in the cache
-            mpc_file = os.path.join(self._cache_dir, "MPCORB.DAT")
-            if not os.path.exists(mpc_file):
-                print(f"  MPC data not cached. Downloading to {self._cache_dir}")
-                # Unzip the .gz file that was downloaded
-                gz_path = mpc_file + ".gz"
-                if not os.path.exists(gz_path):
-                    download(mpc.MPCORB_URL, path=gz_path)  # Ensure data is downloaded to cache
-                if os.path.exists(gz_path):
-                    import gzip
-                    with gzip.open(gz_path, 'rb') as f_in:
-                        with open(mpc_file, 'wb') as f_out:
-                            f_out.write(f_in.read())
-                    os.remove(gz_path)  # Remove the .gz file after extraction
-                # remove the first 43 lines which are not data
-                with open(mpc_file, 'r') as f:
-                    lines = f.readlines()
-                with open(mpc_file, 'w') as f:
-                    f.writelines(lines[43:])
 
-            with self._load.open(mpc_file) as f:
-                minor_planets = mpc.load_mpcorb_dataframe(f)
-            
-            # Filter out orbits with missing data
-            bad_orbits = minor_planets.semimajor_axis_au.isnull()
-            minor_planets = minor_planets[~bad_orbits]
-            
-            # Index by designation for fast lookup
-            minor_planets = minor_planets.set_index('designation', drop=False)
-            
-            return minor_planets
+        try:
+            return _load_mpc_dataframe(cache_dir=self._cache_dir, load=self._load)
         except Exception as e:
             print(f"Warning: Failed to load MPC data: {e}")
             return None
@@ -552,7 +580,12 @@ class NodeAsteroidCamera(Node):
             Normalized sun direction vector [x, y, z] in J2000 frame.
             Points toward the sun (light comes from this direction).
         """
-        if not HAS_SKYFIELD or self._minor_planets is None:
+        asteroid_name = self._p.asteroid.value
+        cached_sun_direction = _SUN_DIRECTION_CACHE.get(asteroid_name)
+        if cached_sun_direction is not None:
+            return cached_sun_direction.copy()
+
+        if not HAS_SKYFIELD or self._minor_planets is None or self._ts is None or self._eph is None:
             # Fallback to default direction
             print("Warning: MPC data unavailable. Using default sun direction.")
             return np.array([0.0, 0.0, -1.0], dtype=np.float32)
@@ -560,9 +593,6 @@ class NodeAsteroidCamera(Node):
         try:
             # Convert datetime to skyfield time object
             t = self._ts.from_datetime(self._date)
-            
-            # Get asteroid name
-            asteroid_name = self._p.asteroid.value
             
             # Construct the MPC designation for the asteroid
             mpc_designations = {
@@ -575,8 +605,6 @@ class NodeAsteroidCamera(Node):
             if mpc_designation is None:
                 print(f"Warning: No MPC designation for asteroid {asteroid_name}")
                 return np.array([0.0, 0.0, -1.0], dtype=np.float32)
-            
-            print(f"  Computing position for {asteroid_name} ({mpc_designation})...")
             
             # Look up the asteroid's orbital data
             try:
@@ -610,8 +638,9 @@ class NodeAsteroidCamera(Node):
                 return np.array([0.0, 0.0, -1.0], dtype=np.float32)
             
             sun_direction = sun_direction_vec / magnitude
-            
-            return sun_direction.astype(np.float32)
+            sun_direction = sun_direction.astype(np.float32)
+            _SUN_DIRECTION_CACHE[asteroid_name] = sun_direction.copy()
+            return sun_direction
             
         except Exception as e:
             print(f"Warning: Failed to compute sun direction: {e}")

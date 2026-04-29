@@ -136,7 +136,7 @@ class ViTGyroPolicy(nn.Module):
     def __init__(
         self,
         image_size: int = 128,
-        vit_model: str = "vit_tiny",
+        vit_model: str = "vit_tiny_patch16_224",
         vit_pretrained: bool = True,
         vit_freeze_depth: int = 6,
         temporal_attention_heads: int = 4,
@@ -167,19 +167,27 @@ class ViTGyroPolicy(nn.Module):
             Output action dimension.
         """
         super().__init__()
+
+        # Accept common shorthand aliases for timm model IDs.
+        vit_aliases = {
+            "vit_tiny": "vit_tiny_patch16_224",
+            "vit_small": "vit_small_patch16_224",
+            "vit_base": "vit_base_patch16_224",
+        }
+        resolved_vit_model = vit_aliases.get(vit_model, vit_model)
         
         # Vision Transformer for image encoding
         try:
             self.vit = timm.create_model(
-                vit_model,
+                resolved_vit_model,
                 pretrained=vit_pretrained,
                 num_classes=hidden_dim,
                 img_size=image_size,
             )
         except Exception as exc:
-            fallback_model = "vit_base_patch16_224"
+            fallback_model = "vit_tiny_patch16_224"
             logger.warning(
-                f"Failed to create ViT model '{vit_model}': {exc}. "
+                f"Failed to create ViT model '{resolved_vit_model}': {exc}. "
                 f"Falling back to '{fallback_model}'."
             )
             self.vit = timm.create_model(
@@ -467,12 +475,11 @@ class RLEnvironmentArgs:
     inbound_ra_offset_deg_range: list[float] = field(default_factory=lambda: [-30.0, 30.0])
     inbound_dec_offset_deg_range: list[float] = field(default_factory=lambda: [-20.0, 20.0])
     bplane_angle_offset_deg_range: list[float] = field(default_factory=lambda: [-30.0, 30.0])
-    start_datetime_jitter_hours: float = 24.0
 
 
 @dataclass
 class NetworkArgs:
-    vit_model: str = "vit_tiny"
+    vit_model: str = "vit_tiny_patch16_224"
     vit_pretrained: bool = True
     vit_freeze_depth: int = 6
     temporal_attention_heads: int = 4
@@ -672,7 +679,6 @@ def create_environment(args: TrainArgs) -> gym.Env:
         inbound_ra_offset_deg_range=tuple(args.rl_environment.inbound_ra_offset_deg_range),
         inbound_dec_offset_deg_range=tuple(args.rl_environment.inbound_dec_offset_deg_range),
         bplane_angle_offset_deg_range=tuple(args.rl_environment.bplane_angle_offset_deg_range),
-        start_datetime_jitter_hours=args.rl_environment.start_datetime_jitter_hours,
     )
     
     env = AsteroidTrackingEnv(flyby_config=flyby_cfg, rl_config=rl_cfg)
@@ -810,12 +816,14 @@ def train(
             
             for _ in range(rollout_steps):
                 observation_td = _stack_observations(current_obs, device)
-                dist = actor.get_dist(observation_td)
-                actions = dist.rsample().clamp(-1.0, 1.0)
-                action_log_probs = dist.log_prob(actions).unsqueeze(-1)
+                with torch.no_grad():
+                    dist = actor.get_dist(observation_td)
+                    actions = dist.rsample()
+                    actions = torch.nan_to_num(actions, nan=0.0, posinf=1.0, neginf=-1.0).clamp(-1.0, 1.0)
+                    action_log_probs = dist.log_prob(actions).unsqueeze(-1)
                 
                 # Step all environments in parallel
-                actions_np = actions.cpu().numpy()
+                actions_np = actions.detach().cpu().numpy()
                 observations, rewards, terminateds, truncateds, infos = env_executor.step_all(actions_np)
                 
                 for env_idx in range(num_envs):
@@ -827,8 +835,8 @@ def train(
                     
                     batch_observations.append(current_obs[env_idx])
                     batch_next_observations.append(obs)
-                    batch_actions.append(actions[env_idx].cpu())
-                    batch_action_log_probs.append(action_log_probs[env_idx].cpu())
+                    batch_actions.append(actions[env_idx].detach())
+                    batch_action_log_probs.append(action_log_probs[env_idx].detach())
                     batch_next_rewards.append(torch.tensor([reward], device=device, dtype=torch.float32))
                     batch_dones.append(torch.tensor([done], device=device, dtype=torch.bool))
                     batch_terminated.append(torch.tensor([terminated], device=device, dtype=torch.bool))

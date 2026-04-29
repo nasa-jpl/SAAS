@@ -57,8 +57,7 @@ python -m asteroid_flyby_syssim.train_ppo \
   --rl-environment.inbound-ra-offset-deg-range -30.0 30.0 \
   --rl-environment.inbound-dec-offset-deg-range -20.0 20.0 \
   --rl-environment.bplane-angle-offset-deg-range -30.0 30.0 \
-  --rl-environment.start-datetime-jitter-hours 24.0 \
-  --network.vit-model vit_tiny \
+  --network.vit-model vit_tiny_patch16_224 \
   --network.vit-pretrained \
   --network.vit-freeze-depth 6 \
   --network.temporal-attention-heads 4 \

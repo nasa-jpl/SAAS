@@ -8,6 +8,10 @@ import pyshtools as pysh
 from syssim.core import InputPort, Node, OutputPort
 
 
+# Process-level cache to avoid repeated dataset loading for parallel RL envs.
+_GRAVITY_MODEL_CACHE: dict[tuple[str, int | None], object] = {}
+
+
 class NodeAsteroidGravityInputs(NamedTuple):
     position: InputPort
     """Position vector [x, y, z] in asteroid body frame (meters)."""
@@ -47,20 +51,30 @@ class NodeAsteroidGravity(Node):
 
     def _setup_gravity_model(self):
         """Load spherical harmonic gravity model from pyshtools datasets."""
+        cache_key = (self._asteroid, self._lmax)
+        cached_model = _GRAVITY_MODEL_CACHE.get(cache_key)
+        if cached_model is not None:
+            self._gravity_model = cached_model
+            self._max_degree = self._gravity_model.lmax
+            return
+
         if self._lmax is not None:
             if self._asteroid == "Ceres":
-                self._gravity_model = pysh.datasets.Ceres.CERES18D(lmax=self._lmax)
+                model = pysh.datasets.Ceres.CERES18D(lmax=self._lmax)
             elif self._asteroid == "Vesta":
-                self._gravity_model = pysh.datasets.Vesta.VESTA20H(lmax=self._lmax)
+                model = pysh.datasets.Vesta.VESTA20H(lmax=self._lmax)
             elif self._asteroid == "Eros":
-                self._gravity_model = pysh.datasets.Eros.JGE15A01(lmax=self._lmax)
+                model = pysh.datasets.Eros.JGE15A01(lmax=self._lmax)
         else:
             if self._asteroid == "Ceres":
-                self._gravity_model = pysh.datasets.Ceres.CERES18D()
+                model = pysh.datasets.Ceres.CERES18D()
             elif self._asteroid == "Vesta":
-                self._gravity_model = pysh.datasets.Vesta.VESTA20H()
+                model = pysh.datasets.Vesta.VESTA20H()
             elif self._asteroid == "Eros":
-                self._gravity_model = pysh.datasets.Eros.JGE15A01()
+                model = pysh.datasets.Eros.JGE15A01()
+
+        self._gravity_model = model
+        _GRAVITY_MODEL_CACHE[cache_key] = model
 
         self._max_degree = self._gravity_model.lmax
 

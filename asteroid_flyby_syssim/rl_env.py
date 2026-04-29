@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import gymnasium as gym
@@ -21,7 +20,12 @@ from scipy.spatial.transform import Rotation
 
 from syssim.core import NodeSystem
 
-from .flyby_sim import build_flyby_rl_system, FlybyRunConfig, FlybyArtifacts
+from .flyby_sim import (
+    FlybyArtifacts,
+    FlybyRunConfig,
+    _hyperbolic_state_from_params,
+    build_flyby_rl_system,
+)
 
 
 def _quat_wxyz_to_xyzw(q_wxyz: np.ndarray) -> np.ndarray:
@@ -77,7 +81,7 @@ class RLEnvironmentConfig:
         Render camera image at this frequency (Hz). If None, render every step.
         E.g., render_at_frequency=10 means render every 0.1 seconds.
     randomize_on_reset : bool
-        If True, sample a new flyby orbit and start datetime each environment reset.
+        If True, sample a new flyby orbit each environment reset.
     periapsis_radius_scale_range : tuple[float, float]
         Multiplicative range applied to base periapsis radius.
     external_angle_offset_deg_range : tuple[float, float]
@@ -90,8 +94,6 @@ class RLEnvironmentConfig:
         Additive offset range for inbound declination [deg].
     bplane_angle_offset_deg_range : tuple[float, float]
         Additive offset range for B-plane angle [deg].
-    start_datetime_jitter_hours : float
-        Uniform start-time jitter window in +/- hours around base start datetime.
     """
     
     camera_width: int = 128
@@ -110,7 +112,6 @@ class RLEnvironmentConfig:
     inbound_ra_offset_deg_range: tuple[float, float] = (-30.0, 30.0)
     inbound_dec_offset_deg_range: tuple[float, float] = (-20.0, 20.0)
     bplane_angle_offset_deg_range: tuple[float, float] = (-30.0, 30.0)
-    start_datetime_jitter_hours: float = 24.0
 
 
 class AsteroidTrackingEnv(gym.Env):
@@ -200,7 +201,7 @@ class AsteroidTrackingEnv(gym.Env):
         return float(rng.uniform(lo, hi))
 
     def _randomized_flyby_config(self) -> FlybyRunConfig:
-        """Create a reset-specific flyby config with randomized orbit/time."""
+        """Create a reset-specific flyby config with randomized orbit."""
         cfg = deepcopy(self._base_flyby_config)
         if not self.rl_config.randomize_on_reset:
             return cfg
@@ -240,18 +241,58 @@ class AsteroidTrackingEnv(gym.Env):
         )
         fly.bplane_angle_deg = ((fly.bplane_angle_deg + 180.0) % 360.0) - 180.0
 
-        try:
-            base_dt = datetime.fromisoformat(cfg.sim.start_date_utc)
-            if base_dt.tzinfo is None:
-                base_dt = base_dt.replace(tzinfo=timezone.utc)
-            jitter_h = max(0.0, float(self.rl_config.start_datetime_jitter_hours))
-            dt_offset_h = self._sample_uniform(self._rng, (-jitter_h, jitter_h))
-            cfg.sim.start_date_utc = (base_dt + timedelta(hours=dt_offset_h)).isoformat()
-        except Exception:
-            # Keep original date if parsing fails.
-            pass
-
         return cfg
+
+    def _bind_system_io_nodes(self):
+        self._rl_action_input = self._system.get_node("rl_action_input")
+        self._gyro_output = self._system.get_node("rl_gyro_output")
+        self._camera_image_output = self._system.get_node("rl_camera_image_output")
+        self._camera_mask_output = self._system.get_node("rl_camera_mask_output")
+        self._camera_visible_output = self._system.get_node("rl_camera_visible_output")
+        self._attitude_output = self._system.get_node("rl_attitude_output")
+        self._position_output = self._system.get_node("rl_position_output")
+
+        camera_node = self._system.get_node("camera")
+        if camera_node is not None and self.rl_config.render_at_frequency is not None:
+            camera_node.frequency = float(self.rl_config.render_at_frequency)
+
+    def _reset_simulation_state(self):
+        gravity = self._system.get_node("gravity")
+        translational = self._system.get_node("translational")
+        attitude = self._system.get_node("attitude")
+        controller = self._system.get_node("controller")
+        gyroscope = self._system.get_node("gyroscope")
+
+        if gravity is not None and translational is not None and hasattr(gravity, "_gravity_model"):
+            mu = float(gravity._gravity_model.gm)
+            r0, v0 = _hyperbolic_state_from_params(
+                mu=mu,
+                periapsis_radius_m=self.flyby_config.flyby.periapsis_radius_m,
+                external_angle=self.flyby_config.flyby.external_angle_deg,
+                true_anomaly_deg=self.flyby_config.flyby.true_anomaly0_deg,
+                inbound_ra_deg=self.flyby_config.flyby.inbound_ra_deg,
+                inbound_dec_deg=self.flyby_config.flyby.inbound_dec_deg,
+                bplane_angle_deg=self.flyby_config.flyby.bplane_angle_deg,
+            )
+            if hasattr(translational, "reset_state"):
+                translational.reset_state(np.concatenate([r0, v0]), sim_time=0.0)
+
+        if attitude is not None and hasattr(attitude, "reset_state"):
+            attitude.reset_state(
+                np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=float),
+                sim_time=0.0,
+            )
+
+        if controller is not None and hasattr(controller, "reset_state"):
+            controller.reset_state(sim_time=0.0)
+
+        for wheel_idx in range(4):
+            wheel = self._system.get_node(f"wheel_{wheel_idx}")
+            if wheel is not None and hasattr(wheel, "reset_state"):
+                wheel.reset_state(omega_rads=0.0, sim_time=0.0)
+
+        if gyroscope is not None and hasattr(gyroscope, "reset_state"):
+            gyroscope.reset_state()
         
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None) -> tuple[dict, dict]:
         """Reset environment to initial state.
@@ -273,31 +314,14 @@ class AsteroidTrackingEnv(gym.Env):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
 
-        if self._system is not None:
-            try:
-                self._system.finalize()
-            except Exception:
-                pass
-
-        # Rebuild simulation with a (possibly randomized) reset-specific config.
         self.flyby_config = self._randomized_flyby_config()
-        self._system, self._artifacts = build_flyby_rl_system(self.flyby_config)
-
-        # Initialize simulation nodes and populate the first observation.
-        self._system.initialize()
-
-        self._rl_action_input = self._system.get_node("rl_action_input")
-        self._gyro_output = self._system.get_node("rl_gyro_output")
-        self._camera_image_output = self._system.get_node("rl_camera_image_output")
-        self._camera_mask_output = self._system.get_node("rl_camera_mask_output")
-        self._camera_visible_output = self._system.get_node("rl_camera_visible_output")
-        self._attitude_output = self._system.get_node("rl_attitude_output")
-        self._position_output = self._system.get_node("rl_position_output")
-
-        # Optional camera render throttling for training speed.
-        camera_node = self._system.get_node("camera")
-        if camera_node is not None and self.rl_config.render_at_frequency is not None:
-            camera_node.frequency = float(self.rl_config.render_at_frequency)
+        if self._system is None:
+            self._system, self._artifacts = build_flyby_rl_system(self.flyby_config)
+            self._system.initialize()
+            self._bind_system_io_nodes()
+        else:
+            self._system.initialize()
+            self._reset_simulation_state()
 
         if self._rl_action_input is not None:
             self._rl_action_input.value = np.zeros(3, dtype=float)
@@ -348,7 +372,7 @@ class AsteroidTrackingEnv(gym.Env):
             self._rl_action_input.value = tau_cmd
 
         # Advance the simulation by one timestep.
-        self._system.step(self.flyby_config.sim.sim_dt)
+        self._system.step(self.flyby_config.sim.dt_s)
 
         # Get current observation
         obs = self._get_observation()
