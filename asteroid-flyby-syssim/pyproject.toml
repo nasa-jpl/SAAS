@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asteroid-flyby-syssim"
+version = "0.0.0"
+description = "Asteroid flyby simulation using syssim"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "tyro>=0.9.0",
+    "numpy>=1.24",
+    "matplotlib>=3.8",
+    "imageio>=2.34",
+    "pyshtools>=4.12",
+    "mitsuba>=3.5.0",
+    "drjit>=0.4.6",
+    "skyfield>=1.49",
+    "platformdirs>=4.2",
+    "scipy>=1.10",
+    "rich>=13.0",
+    # RL training dependencies
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "torchrl>=0.1.0",
+    "gymnasium>=0.29.0",
+    "timm>=0.9.0",
+    "toml>=0.10.0",
+    "tensorboard>=2.13.0",
+    "tqdm>=4.65.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["asteroid_flyby_syssim*"]
+
+[project.scripts]
+syssim-asteroid-flyby = "asteroid_flyby_syssim.__main__:main"
+syssim-asteroid-flyby-tune-pid = "asteroid_flyby_syssim.tune_pid:main"
+syssim-train-rl = "asteroid_flyby_syssim.train_ppo:main"
+syssim-eval-rl = "asteroid_flyby_syssim.eval_policy:main"

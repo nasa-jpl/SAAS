@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+python -m asteroid_flyby_syssim.train_ppo \
+  --output-dir /tmp/outputs/rl_training \
+  --simulation.sim-dt 0.01 \
+  --simulation.start-date-utc 2024-01-01T00:00:00 \
+  --simulation.duration-seconds 3600.0 \
+  --asteroid.asteroid Ceres \
+  --asteroid.gravity-lmax 10 \
+  --flyby.periapsis-radius-m 3000.0 \
+  --flyby.external-angle-deg 120.0 \
+  --flyby.true-anomaly0-deg -90.0 \
+  --flyby.inbound-ra-deg 0.0 \
+  --flyby.inbound-dec-deg 0.0 \
+  --flyby.bplane-angle-deg 0.0 \
+  --spacecraft.inertia-kgm2 10.0 10.0 10.0 \
+  --spacecraft.boresight-body 1.0 0.0 0.0 \
+  --controller.kp 0.5 \
+  --controller.kd 2.0 \
+  --controller.ki 0.01 \
+  --controller.integral-limit 0.1 \
+  --reaction-wheel.max-momentum-nms 10.0 \
+  --reaction-wheel.max-torque-nm 1.0 \
+  --reaction-wheel.max-speed-rps 628.3 \
+  --reaction-wheel.inertia-kgm2 0.01 \
+  --reaction-wheel.friction-viscous 0.001 \
+  --reaction-wheel.friction-coulomb 0.001 \
+  --reaction-wheel.command-lag-tau 0.01 \
+  --gyroscope.bias-rad-s 0.0 0.0 0.0 \
+  --gyroscope.scale-errors 0.0 0.0 0.0 \
+  --gyroscope.white-noise-std-rad-s 1e-4 \
+  --gyroscope.bias-random-walk-std-rad-s2 1e-6 \
+  --gyroscope.sample-rate-hz 100.0 \
+  --output.output-dir /tmp/outputs/rl_training \
+  --output.run-name ast_track_01 \
+  --output.no-render-video \
+  --output.camera-width 128 \
+  --output.camera-height 128 \
+  --output.camera-fov-deg 50.0 \
+  --output.render-fps 10.0 \
+  --output.spp 2 \
+  --output.no-use-integrator-mask \
+  --rl-environment.camera-width 128 \
+  --rl-environment.camera-height 128 \
+  --rl-environment.camera-fov-deg 50.0 \
+  --rl-environment.max-steps 1000 \
+  --rl-environment.max-steps-without-asteroid 100 \
+  --rl-environment.asteroid-visibility-threshold 0.01 \
+  --rl-environment.torque-scale-nm 1.0 \
+  --rl-environment.gyro-history-length 4 \
+  --rl-environment.render-at-frequency None \
+  --rl-environment.randomize-on-reset \
+  --rl-environment.periapsis-radius-scale-range 0.8 1.2 \
+  --rl-environment.external-angle-offset-deg-range -20.0 20.0 \
+  --rl-environment.true-anomaly0-offset-deg-range -45.0 45.0 \
+  --rl-environment.inbound-ra-offset-deg-range -30.0 30.0 \
+  --rl-environment.inbound-dec-offset-deg-range -20.0 20.0 \
+  --rl-environment.bplane-angle-offset-deg-range -30.0 30.0 \
+  --network.vit-model vit_tiny_patch16_224 \
+  --network.vit-pretrained \
+  --network.vit-freeze-depth 6 \
+  --network.temporal-attention-heads 4 \
+  --network.temporal-attention-dim 64 \
+  --network.hidden-dim 256 \
+  --network.action-std-init 0.5 \
+  --training.algorithm PPO \
+  --training.num-envs 10 \
+  --training.steps-per-rollout 512 \
+  --training.num-epochs 3 \
+  --training.batch-size 32 \
+  --training.learning-rate 1e-4 \
+  --training.entropy-coeff 0.01 \
+  --training.value-coeff 0.5 \
+  --training.grad-clip-norm 0.5 \
+  --training.ppo-clip-ratio 0.2 \
+  --training.gae-lambda 0.95 \
+  --training.gamma 0.99 \
+  --training.lr-schedule constant \
+  --training.warmup-steps 0 \
+  --training.max-steps 1000000 \
+  --training.checkpoint-frequency 10000 \
+  --training.early-stopping-patience 20 \
+  --training.early-stopping-threshold 0.95 \
+  --logging.tensorboard-log-dir /tmp/rl_training/logs \
+  --logging.log-frequency 100 \
+  --logging.save-video-frequency None \
+  --logging.log-episode-return \
+  --logging.log-episode-length \
+  --logging.log-policy-loss \
+  --logging.log-value-loss \
+  --logging.log-entropy \
+  --logging.log-asteroid-visibility \
+  --logging.log-mean-error-angle \
+  --logging.log-gradient-norm \
+  --evaluation.num-eval-episodes 10 \
+  --evaluation.eval-frequency 50000 \
+  --evaluation.deterministic \
+  --evaluation.render-video \
+  --evaluation.video-dir /tmp/rl_training/eval_videos \
+  --device.device cuda \
+  --device.no-mixed-precision \
+  --reproducibility.seed 42 \
+  --reproducibility.deterministic-torch
