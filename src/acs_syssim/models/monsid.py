@@ -1,6 +1,8 @@
 from collections import defaultdict, deque
 import csv
+from email.mime import message
 import re
+import select
 from typing import NamedTuple
 from syssim import Node, InputPort, OutputPort
 import io
@@ -10,6 +12,21 @@ import threading
 import subprocess
 import numpy as np
 from tqdm import tqdm
+import json
+import zmq
+import threading
+
+def read_stream(stream, stream_name):
+    """Read from a stream and print each line immediately"""
+    try:
+        for line in iter(stream.readline, ''):
+            if line:
+                # tqdm.write(f"[{stream_name}] {line.rstrip()}")
+                pass
+    except Exception as e:
+        tqdm.write(f"Error reading {stream_name}: {e}")
+    finally:
+        stream.close()
 
 class NodeMONSIDDiagnoserInputs(NamedTuple):
     dynamics_rate: InputPort
@@ -112,34 +129,6 @@ class NodeMONSIDDiagnoser(Node):
             else:
                 self._header += [f"{ip.name}_{n+1}" for n in range(3)]
 
-
-        super().__init__(self._i, self._o, **kwargs)
-
-    def initialize(self):
-        """Initialize the node. This is called before the simulation starts."""
-        # Make a temporary file path for the csv pipe that will be used for communication with MONSID
-        self._tmp_path = f'{tempfile.gettempdir()}/monsid_pipe_{os.getpid()}.csv'
-        # os.mkfifo(self._tmp_path)
-        # fd = os.open(self._tmp_path, os.O_WRONLY | os.O_NONBLOCK)  # Open the FIFO for reading and writing
-        # self._fifo_pipe_file = os.fdopen(fd, 'w')  
-        self._tmp_csv = open(self._tmp_path, 'w', newline='')  # Open the temporary file for writing
-        self._writer = csv.writer(self._tmp_csv, lineterminator='\n')
-
-        # Pop fault_hold_time from kwargs if provided (seconds); default 5.0s debounce
-        self._fault_hold_time = float(self._config.get("fault_hold_time", 0.5))
-
-        # Check if we have a name and a save dir for this simulation
-        # if self._system._sim_name is not None and self._system._save_dir is not None:
-        #     self._csv_file_path = f"{self._system._save_dir}/{self._system._sim_name}_monsid_record.csv"
-        # else:
-        #     # Create a temporary file if no name or save dir is provided
-        #     self._csv_file_path = tempfile.NamedTemporaryFile(delete=False, suffix="_monsid_record.csv").name
-        # # Create the CSV file and write the header
-        # self._file_handle = open(self._csv_file_path, mode='w')
-        # self._writer = csv.writer(self._file_handle, lineterminator='\n')
-        # self._writer.writerow(self._header)
-
-        # Create a default all healthy dict to put out if there is no faults detected
         self._default_healthy_diagnosis = {
             'IMU_1': 'Healthy',
             'IMU_2': 'Healthy',
@@ -164,11 +153,51 @@ class NodeMONSIDDiagnoser(Node):
             'ENC_8': 'Healthy',
         }
 
+        super().__init__(self._i, self._o, **kwargs)
+
+    def initialize(self):
+        """Initialize the node. This is called before the simulation starts."""
+
+        # Start the MONSID subprocess
+        monsid_location = "/home/j/Code/sync/saas/acs-monsid/build/debug/bin/CustomExec"
+        if not os.path.exists(monsid_location):
+            raise FileNotFoundError(f"MONSID executable not found at {monsid_location}")
+        self._monsid_process = subprocess.Popen(
+            [monsid_location],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,  # Line-buffered
+        )
+
+        self._stdout_thread = threading.Thread(target=read_stream, args=(self._monsid_process.stdout, "MONSID_STDOUT"), daemon=True)
+        self._stderr_thread = threading.Thread(target=read_stream, args=(self._monsid_process.stderr, "MONSID_STDERR"), daemon=True)
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+
+        # Initialize the zeromq that will be used to talk to the process
+        context = zmq.Context()
+        self._socket = context.socket(zmq.REQ)
+        self._socket.connect("ipc:///tmp/acs_monsid")
+
+        # Make a temporary file path for the csv pipe that will be used for communication with MONSID
+        # self._tmp_path = f'{tempfile.gettempdir()}/monsid_pipe_{os.getpid()}.csv'
+        # # os.mkfifo(self._tmp_path)
+        # # fd = os.open(self._tmp_path, os.O_WRONLY | os.O_NONBLOCK)  # Open the FIFO for reading and writing
+        # # self._fifo_pipe_file = os.fdopen(fd, 'w')  
+        # self._tmp_csv = open(self._tmp_path, 'w', newline='')  # Open the temporary file for writing
+        # self._writer = csv.writer(self._tmp_csv, lineterminator='\n')
+
+        # Pop fault_hold_time from kwargs if provided (seconds); default 5.0s debounce
+        self._fault_hold_time = float(self._config.get("fault_hold_time", 0.5))
+
+
     def update(self, sim_time: float):
         """Update the node. This is called at each simulation step."""
         # Read the inputs and store current RW commands for next step
         current_rw_cmds = {}
-        row = [f"{sim_time:.10f}"]  # Start with the simulation time
+        row = [sim_time]  # Start with the simulation time
         for ip in self._i:
             val = ip.read()
             
@@ -178,177 +207,224 @@ class NodeMONSIDDiagnoser(Node):
                 current_rw_cmds[rw_key] = val.copy()  # Store current value for next step
                 # Use buffered value (from previous step) for CSV
                 buffered_val = self._rw_cmd_buffer[rw_key]
-                row += [f"{buffered_val[i]:.10f}" for i in range(3)]
+                row += [float(buffered_val[i]) for i in range(3)]
             elif "SRU" in ip.name or "DynamicsOrientation" in ip.name:
                 # Convert from real part first [w, x, y, z] to real part last [x, y, z, w]
                 # Assume val is [w, x, y, z]
-                row += [f"{val[i]:.10f}" for i in range(1, 4)] + [f"{val[0]:.10f}"]
+                row += [float(val[i]) for i in range(1, 4)] + [float(val[0])]
             elif "Enc" in ip.name:
-                row += [f"{val:.10f}"]
+                row += [float(val)]
             else:
-                row += [f"{val[i]:.10f}" for i in range(3)]
-        
+                row += [float(val[i]) for i in range(3)]
+        # Use row and header to create a disctionary of val to key
+        row_dict = dict(zip(self._header, row))
+
+        # Ensure all values are np.float32 for JSON serialization
+        # for key in row_dict:
+        #     row_dict[key] = float(np.float32(row_dict[key]))
+
+
+        # Convert row_dict to JSON and send to MONSID via zeromq
+        try:
+            self._socket.send_json(row_dict)
+        except Exception as e:
+            tqdm.write(f"Error sending JSON to MONSID: {e}")
+
+        # if self._monsid_process.poll() is None:  # Process is still running
+        #     max_lines = 100
+        #     for _ in range(max_lines):
+        #         # Check if there's data to read from stdout or stderr
+        #         reads = [self._monsid_process.stdout, self._monsid_process.stderr]
+        #         readable, _, _ = select.select(reads, [], [], 0.1)
+        #         for r in readable:
+        #             line = r.readline()
+        #             if line:
+        #                 if r == self._monsid_process.stdout:
+        #                     tqdm.write(f"MONSID STDOUT: {line.strip()}")
+        #                 else:
+        #                     tqdm.write(f"MONSID STDERR: {line.strip()}")
+
+        # Block and wait for a response
+        try:
+            diagnosis_result = self._socket.recv_json()
+            
+            # Remove C__ prefix from component names
+            diagnosis_result = {k.strip("C__"): v for k, v in diagnosis_result.items()}
+
+        except Exception as e:
+            tqdm.write(f"Error receiving JSON from MONSID: {e}")
+
+        raw_status = diagnosis_result
+        output_status = diagnosis_result
+
         # Update RW command buffer for next step
         for key, val in current_rw_cmds.items():
             self._rw_cmd_buffer[key] = val
 
-        self._buffer.append(row)
+        # self._buffer.append(row)
         
-        # Only process if we have enough data to establish state
-        if len(self._buffer) < self._n_buf:
-            self.o.health.shift_out(None)
-            self.o.fault_detected.shift_out(np.array([]))  # No faults detected yet
-            return
+        # # Only process if we have enough data to establish state
+        # if len(self._buffer) < self._n_buf:
+        #     self.o.health.shift_out(None)
+        #     self.o.fault_detected.shift_out(np.array([]))  # No faults detected yet
+        #     return
         
-        # Clear the file before writing (truncate to zero length)
-        self._tmp_csv.seek(0)
-        self._tmp_csv.truncate(0)
-        self._writer.writerow(self._header)
-        for row in self._buffer:
-            self._writer.writerow(row)
-        self._tmp_csv.flush()
-        self._tmp_csv.seek(0)
+        # # Clear the file before writing (truncate to zero length)
+        # self._tmp_csv.seek(0)
+        # self._tmp_csv.truncate(0)
+        # self._writer.writerow(self._header)
+        # for row in self._buffer:
+        #     self._writer.writerow(row)
+        # self._tmp_csv.flush()
+        # self._tmp_csv.seek(0)
             
-        cmd = [
-            "/home/j/Code/sync/saas/monsid_sdk/x64/Linux/debug/monsid-exec",
-            "-l",
-            "/home/j/Code/sync/saas/acs-monsid/build/debug/bin/acs-monsid.so",
-            "-m",
-            "acs_monsid_Model",
-            "-i",
-            self._tmp_path,
-            "-fsr",
-        ]
+        # cmd = [
+        #     "/home/j/Code/sync/saas/monsid_sdk/x64/Linux/debug/monsid-exec",
+        #     "-l",
+        #     "/home/j/Code/sync/saas/acs-monsid/build/debug/bin/acs-monsid.so",
+        #     "-m",
+        #     "acs_monsid_Model",
+        #     "-i",
+        #     self._tmp_path,
+        #     "-fsr",
+        # ]
         
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            output = result.stdout
+        # try:
+        #     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        #     output = result.stdout
 
-            # Step 2: Parse the output
-            health_data = defaultdict(dict)
-            lines = output.splitlines()
-            i = 0
-            current_timeslice = None
+        #     # Step 2: Parse the output
+        #     health_data = defaultdict(dict)
+        #     lines = output.splitlines()
+        #     i = 0
+        #     current_timeslice = None
 
-            # Find "Fault Identification count: %d" and extract the number of faults
-            fault_count = 0
-            for line in lines:
-                match = re.search(r"Fault Identification count: (\d+)", line)
-                if match:
-                    fault_count = int(match.group(1))
-                    break
-            if fault_count == 0:
-                # No faults detected, all components healthy
-                self.o.health.shift_out(self._default_healthy_diagnosis)
-                self.o.fault_detected.shift_out(np.array([]))  # No faults detected
-                return
+        #     # Find "Fault Identification count: %d" and extract the number of faults
+        #     fault_count = 0
+        #     for line in lines:
+        #         match = re.search(r"Fault Identification count: (\d+)", line)
+        #         if match:
+        #             fault_count = int(match.group(1))
+        #             break
+        #     if fault_count == 0:
+        #         # No faults detected, all components healthy
+        #         self.o.health.shift_out(self._default_healthy_diagnosis)
+        #         self.o.fault_detected.shift_out(np.array([]))  # No faults detected
+        #         return
             
-            while i < len(lines):
-                line = lines[i].strip()
+        #     while i < len(lines):
+        #         line = lines[i].strip()
 
-                # Look for timeslice block start
-                match = re.match(r"\* Fault threshold met @ timestamp: [\d.]+, timeslice: (\d+)", line)
-                if match:
-                    current_timeslice = int(match.group(1))
-                    # Skip ahead to table
-                    while i < len(lines) and not lines[i].strip().startswith("Health"):
-                        i += 1
-                    # Skip header lines
-                    i += 3
-                    # Read table rows
-                    while i < len(lines):
-                        row = lines[i].strip()
-                        if not row or row.startswith("*"):
-                            break
-                        # Remove ANSI escape sequences
-                        row_clean = re.sub(r'\x1b\[[0-9;]*m', '', row)
-                        # Parse the component line
-                        comp_match = re.match(r"(\w+) ?: ([\w ]+)\s+\|\s+([\w ]+)\s+\|\s+([\d.]+)", row_clean)
-                        if comp_match:
-                            component = comp_match.group(1)
-                            # Only process components with "C__" prefix
-                            if component.startswith("C__"):
-                                # Remove "C__" prefix when storing
-                                component_clean = component[3:]  # Remove first 3 characters
-                                status = comp_match.group(2).strip()
-                                suspension_state = comp_match.group(3).strip()
-                                rank = float(comp_match.group(4))
-                                health_data[current_timeslice][component_clean] = {
-                                    "status": status,
-                                    "suspension_state": suspension_state,
-                                    "rank": rank
-                                }
-                        i += 1
-                else:
-                    i += 1
+        #         # Look for timeslice block start
+        #         match = re.match(r"\* Fault threshold met @ timestamp: [\d.]+, timeslice: (\d+)", line)
+        #         if match:
+        #             current_timeslice = int(match.group(1))
+        #             # Skip ahead to table
+        #             while i < len(lines) and not lines[i].strip().startswith("Health"):
+        #                 i += 1
+        #             # Skip header lines
+        #             i += 3
+        #             # Read table rows
+        #             while i < len(lines):
+        #                 row = lines[i].strip()
+        #                 if not row or row.startswith("*"):
+        #                     break
+        #                 # Remove ANSI escape sequences
+        #                 row_clean = re.sub(r'\x1b\[[0-9;]*m', '', row)
+        #                 # Parse the component line
+        #                 comp_match = re.match(r"(\w+) ?: ([\w ]+)\s+\|\s+([\w ]+)\s+\|\s+([\d.]+)", row_clean)
+        #                 if comp_match:
+        #                     component = comp_match.group(1)
+        #                     # Only process components with "C__" prefix
+        #                     if component.startswith("C__"):
+        #                         # Remove "C__" prefix when storing
+        #                         component_clean = component[3:]  # Remove first 3 characters
+        #                         status = comp_match.group(2).strip()
+        #                         suspension_state = comp_match.group(3).strip()
+        #                         rank = float(comp_match.group(4))
+        #                         health_data[current_timeslice][component_clean] = {
+        #                             "status": status,
+        #                             "suspension_state": suspension_state,
+        #                             "rank": rank
+        #                         }
+        #                 i += 1
+        #         else:
+        #             i += 1
 
-            # Build diagnosis result and take the latest timeslice
-            diagnosis_result = dict(health_data)
-            components = list(diagnosis_result.values())
-            component_final = components[-1]
+        #     # Build diagnosis result and take the latest timeslice
+        #     diagnosis_result = dict(health_data)
+        #     components = list(diagnosis_result.values())
+        #     component_final = components[-1]
 
-            # Raw status map (convert 'Suspect' -> 'Healthy')
-            raw_status = {comp_name: comp_data["status"] for comp_name, comp_data in component_final.items()}
-            for comp_name, status in list(raw_status.items()):
-                if status == "Suspect":
-                    raw_status[comp_name] = "Healthy"
+        #     # Raw status map (convert 'Suspect' -> 'Healthy')
+        #     raw_status = {comp_name: comp_data["status"] for comp_name, comp_data in component_final.items()}
+        #     for comp_name, status in list(raw_status.items()):
+        #         if status == "Suspect":
+        #             raw_status[comp_name] = "Healthy"
 
-            # Apply debounce: only declare a component Faulty if it has been reported as Faulty
-            # continuously for at least self._fault_hold_time seconds.
-            output_status = {}
-            newly_faulty_components = []
-            for comp_name, status in raw_status.items():
-                is_raw_faulty = status == "Faulty"
-                if is_raw_faulty:
-                    # If first time observed faulty, record the time
-                    if comp_name not in self._fault_start_times:
-                        self._fault_start_times[comp_name] = sim_time
-                    # Check if elapsed time exceeds hold time
-                    elapsed = sim_time - self._fault_start_times.get(comp_name, sim_time)
-                    if elapsed >= self._fault_hold_time:
-                        output_status[comp_name] = "Faulty"
-                    else:
-                        output_status[comp_name] = "Healthy"
-                else:
-                    # Clear any start time and mark healthy
-                    if comp_name in self._fault_start_times:
-                        del self._fault_start_times[comp_name]
-                    output_status[comp_name] = "Healthy"
+        # Apply debounce: only declare a component Faulty if it has been reported as Faulty
+        # continuously for at least self._fault_hold_time seconds.
+        # output_status = {}
+        newly_faulty_components = []
+        # for comp_name, status in raw_status.items():
+        #     is_raw_faulty = status == "Faulty"
+        #     if is_raw_faulty:
+        #         # If first time observed faulty, record the time
+        #         if comp_name not in self._fault_start_times:
+        #             self._fault_start_times[comp_name] = sim_time
+        #         # Check if elapsed time exceeds hold time
+        #         elapsed = sim_time - self._fault_start_times.get(comp_name, sim_time)
+        #         if elapsed >= self._fault_hold_time:
+        #             output_status[comp_name] = "Faulty"
+        #         else:
+        #             output_status[comp_name] = "Healthy"
+        #     else:
+        #         # Clear any start time and mark healthy
+        #         if comp_name in self._fault_start_times:
+        #             del self._fault_start_times[comp_name]
+        #         output_status[comp_name] = "Healthy"
 
-            # Rising edge detection on the debounced output_status
-            for comp_name, out_status in output_status.items():
-                is_faulty_out = out_status == "Faulty"
-                was_faulty = self._previous_diagnosis.get(comp_name, False)
-                if is_faulty_out and not was_faulty:
-                    newly_faulty_components.append(comp_name)
-                # Update previous output state
-                self._previous_diagnosis[comp_name] = is_faulty_out
+        # Rising edge detection on the debounced output_status
+        for comp_name, out_status in output_status.items():
+            is_faulty_out = out_status == "Faulty"
+            was_faulty = self._previous_diagnosis.get(comp_name, False)
+            if is_faulty_out and not was_faulty:
+                newly_faulty_components.append(comp_name)
+            # Update previous output state
+            self._previous_diagnosis[comp_name] = is_faulty_out
 
-            self.o.health.shift_out(output_status)
-            self.o.fault_detected.shift_out(np.array(newly_faulty_components))
+        self.o.health.shift_out(output_status)
+        self.o.fault_detected.shift_out(np.array(newly_faulty_components))
 
-        except subprocess.CalledProcessError as e:
-            self._monsid_result = {
-                "returncode": e.returncode,
-                "stdout": e.stdout,
-                "stderr": e.stderr,
-            }
-            print(f"Error {e.returncode} running MONSID\n: {e.stdout}")
-        except Exception as e:
-            self._monsid_result = {
-                "error": str(e),
-            }
-            print(f"Error running MONSID: {e}")
+        # except subprocess.CalledProcessError as e:
+        #     self._monsid_result = {
+        #         "returncode": e.returncode,
+        #         "stdout": e.stdout,
+        #         "stderr": e.stderr,
+        #     }
+        #     print(f"Error {e.returncode} running MONSID\n: {e.stdout}")
+        # except Exception as e:
+        #     self._monsid_result = {
+        #         "error": str(e),
+        #     }
+        #     print(f"Error running MONSID: {e}")
 
     def finalize(self, fault_history: dict[float, dict[str, bool]] = None):
         """Finalize the node. This is called after the simulation ends."""
-        # Close the CSV file
-        # self._file_handle.close()
-        self._tmp_csv.close()
-        # Remove the temporary FIFO file
-        if os.path.exists(self._tmp_path):
-            os.remove(self._tmp_path)
 
+        # Close the reader threads
+        if self._stdout_thread.is_alive():
+            self._stdout_thread.join(timeout=1)
+        if self._stderr_thread.is_alive():
+            self._stderr_thread.join(timeout=1)
+
+        # Close the MONSID subprocess by sending SIGINT. If it doesn't close, kill it.
+        if self._monsid_process.poll() is None:  # If still running
+            self._monsid_process.send_signal(subprocess.signal.SIGINT)
+            try:
+                self._monsid_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._monsid_process.kill()
     @property
     def i(self):
         return self._i

@@ -13,9 +13,10 @@ import shutil
 import tempfile
 import platform
 from scipy.spatial.transform import Rotation as R
+from textwrap import wrap
 
 from syssim import Node, InputPort
-
+from tqdm import tqdm
 # matplotlib.use("Agg")  # Use Agg backend for PNG output
 # matplotlib.rcParams.update(
 #     {
@@ -26,7 +27,7 @@ from syssim import Node, InputPort
 
 # Use a seaborn theme appropriate for conference paper figures.
 # 'context="paper"' yields compact, publication-ready elements; 'whitegrid' keeps subtle grid lines.
-sns.set_theme(context="talk", style="whitegrid", font="serif", rc={"font.size": 11})
+sns.set_theme(context="paper", style="whitegrid", font="serif", rc={"font.size": 11})
 
 
 class ReportInputs(NamedTuple):
@@ -165,6 +166,9 @@ class Reporter(Node):
         os.makedirs(out_dir, exist_ok=True)
         base_name = (self.name or "report").replace(" ", "_")
         
+        # Calculate fault detection latencies
+        latency_info = self._calculate_fault_detection_latencies(health, fault_history, time)
+        
         # Save all plot data
         plot_data = {
             'time': time,
@@ -187,11 +191,114 @@ class Reporter(Node):
         print(f"Reporter.finalize: saved plot data to {data_file_path}")
 
         # Generate plots
-        self._generate_all_plots(plot_data, out_dir)
+        self._generate_all_plots(plot_data, out_dir, latency_info)
 
         return super().finalize()
 
-    def _generate_all_plots(self, plot_data: dict, out_dir: str):
+    def _calculate_fault_detection_latencies(self, health: list, fault_history: dict, time: np.ndarray):
+        """
+        Calculate detection latency for each fault by comparing when it was injected
+        (fault_history) to when it was first detected (health).
+        Returns a dict mapping fault_name -> list of (injection_time, detection_time, latency) tuples.
+        
+        Specialized mapping:
+        - 'Gyro 1 Bias Creep' -> 'Gyro_1' in health
+        - 'SRU 1 Bias Creep' -> 'SRU_1' in health
+        - 'Encoder 4 Random Noise' -> 'ENC_4' or 'RWA_4' in health (whichever detected first)
+        """
+        if not fault_history or not health:
+            return {}
+        
+        # Define fault-to-health component mapping
+        fault_to_health_map = {
+            'Gyro 1 Bias Creep': ['IMU_1'],
+            'SRU 1 Bias Creep': ['SRU_1'],
+            'Encoder 4 Random Noise': ['ENC_4', 'RWA_4'],
+        }
+        
+        latency_info = {}
+
+        # Make a list of tuples (time, health_dict, fault_dict)
+        health_data = [(time[i], health[i], fault_history.get(time[i], {})) for i in range(len(time))]
+        
+        for map in fault_to_health_map.items():
+            key, val = map
+            fault_start_time = None
+            fault_detected_time = None
+            for t, health_dict, fault_dict in health_data:
+                is_injected = fault_dict.get(key, False)
+                # Check for injection
+                if is_injected and fault_start_time is None:
+                    fault_start_time = t  # Fault injection time
+                # Check for detection
+                if fault_start_time is not None and fault_detected_time is None:
+                    # Check if any mapped health components are faulty
+                    for health_component in val:
+                        if health_dict.get(health_component) == "Faulty":
+                            fault_detected_time = t  # Fault detection time
+                            break
+                if fault_start_time is not None and fault_detected_time is not None:
+                    latency = fault_detected_time - fault_start_time
+                    if latency >= 0:  # Only count positive latencies
+                        if key not in latency_info:
+                            latency_info[key] = []
+                        latency_info[key].append((fault_start_time, fault_detected_time, latency))
+                    break
+                    
+        # # Get sorted times from fault history
+        # fault_times = sorted(fault_history.keys())
+        
+        # # For each fault, track its injection and detection
+        # for fault_name in set().union(*fault_history.values()):
+        #     latencies = []
+            
+        #     # Get the health components to look for
+        #     health_components = fault_to_health_map.get(fault_name, [fault_name])
+            
+        #     # Find each injection event
+        #     fault_active = False
+        #     injection_time = None
+            
+        #     for time_idx, fault_time in enumerate(fault_times):
+        #         is_injected = fault_history[fault_time].get(fault_name, False)
+                
+        #         if is_injected and not fault_active:
+        #             # Rising edge: fault just became active
+        #             fault_active = True
+        #             injection_time = fault_time
+        #         elif not is_injected and fault_active:
+        #             # Falling edge: fault just became inactive
+        #             fault_active = False
+        #             injection_time = None
+                
+        #         # If fault is currently active, check if it's detected
+        #         if fault_active and injection_time is not None:
+        #             # Look in health data for when this fault was first detected
+        #             for health_idx, health_dict in enumerate(health):
+        #                 if health_dict is None:
+        #                     continue
+                        
+        #                 # Check if any of the mapped health components is "Faulty"
+        #                 detected = False
+        #                 for health_component in health_components:
+        #                     if health_dict.get(health_component) == "Faulty":
+        #                         detected = True
+        #                         break
+                        
+        #                 if detected:
+        #                     # Fault was detected at this health index
+        #                     health_time = time[health_idx] if health_idx < len(time) else time[-1]
+        #                     latency = health_time - injection_time
+        #                     if latency >= 0:  # Only count positive latencies
+        #                         latencies.append((injection_time, health_time, latency))
+        #                     break
+            
+        #     if latencies:
+        #         latency_info[fault_name] = latencies
+        
+        return latency_info
+
+    def _generate_all_plots(self, plot_data: dict, out_dir: str, latency_info: dict = None):
         """Generate all plots from plot data dictionary."""
         # Extract data
         time = plot_data['time']
@@ -225,18 +332,32 @@ class Reporter(Node):
         )
         self._plot_combined_timeline(health, mode, fault_history, time, out_dir, base_name)
 
-        # Create LaTeX document
+        # Create LaTeX document with latency information
+        self._generate_latex_report(out_dir, base_name, latency_info)
+
+    def _generate_latex_report(self, out_dir: str, base_name: str, latency_info: dict = None):
+        """Generate LaTeX report with optional latency table."""
+        # Create latency table if available
+        latency_table = ""
+        if latency_info:
+            latency_table = self._create_latency_table(latency_info)
+            # Print latency summary to console
+            self._print_latency_summary(latency_info)
+        
         tex_content = r"""\documentclass[11pt]{article}
     \usepackage[margin=1in]{geometry}
     \usepackage{graphicx}
     \usepackage{amsmath}
     \usepackage{float}
+    \usepackage{booktabs}
 
     \begin{document}
 
     \title{Simulation Report}
     \date{\today}
     \maketitle
+
+    """ + latency_table + r"""
 
     \section{Command Tracking Performance}
 
@@ -283,7 +404,10 @@ class Reporter(Node):
     \end{figure}
 
     \end{document}
-    """ % (os.path.basename(png_path), os.path.basename(est_png_path), os.path.basename(combined_png_path), os.path.basename(rw_png_path))
+    """ % (os.path.basename(os.path.join(out_dir, f"{base_name}_errors.png")), 
+          os.path.basename(os.path.join(out_dir, f"{base_name}_estimator.png")), 
+          os.path.basename(os.path.join(out_dir, f"{base_name}_timeline.png")), 
+          os.path.basename(os.path.join(out_dir, f"{base_name}_rw_cmds.png")))
 
         tex_path = os.path.join(out_dir, f"{base_name}_report.tex")
         with open(tex_path, "w") as f:
@@ -334,6 +458,63 @@ class Reporter(Node):
         except Exception as e:
             print(f"Reporter: could not open PDF automatically: {e}")
             print(f"PDF available at: {pdf_path}")
+
+    def _create_latency_table(self, latency_info: dict) -> str:
+        """Create a LaTeX table for fault detection latencies."""
+        if not latency_info:
+            return ""
+        
+        table_rows = []
+        for fault_name in sorted(latency_info.keys()):
+            latencies = latency_info[fault_name]
+            if latencies:
+                # Use the first detection latency for the table
+                injection_time, detection_time, latency = latencies[0]
+                table_rows.append(
+                    f"{fault_name} & {injection_time:.3f} s & {detection_time:.3f} s & {latency:.3f} s \\\\"
+                )
+        
+        if not table_rows:
+            return ""
+        
+        table = r"""\section{Fault Detection Latency}
+
+    The following table summarizes the detection latency for each injected fault, defined as the time between when the fault was injected and when it was first detected by the health monitoring system.
+
+    \begin{table}[H]
+    \centering
+    \begin{tabular}{lrrl}
+    \toprule
+    \textbf{Fault Name} & \textbf{Injection Time (s)} & \textbf{Detection Time (s)} & \textbf{Latency (s)} \\
+    \midrule
+    """ + "\n    ".join(table_rows) + r"""
+    \bottomrule
+    \end{tabular}
+    \caption{Fault detection latencies showing the delay between fault injection and detection.}
+    \label{tab:latencies}
+    \end{table}
+
+    """
+        return table
+
+    def _print_latency_summary(self, latency_info: dict):
+        """Print fault detection latencies to console."""
+        if not latency_info:
+            print("Reporter: No fault detection latencies to report")
+            return
+        
+        print("\n" + "="*70)
+        print("FAULT DETECTION LATENCY SUMMARY")
+        print("="*70)
+        print(f"{'Fault Name':<30} {'Injection (s)':<15} {'Detection (s)':<15} {'Latency (s)':<15}")
+        print("-"*70)
+        
+        for fault_name in sorted(latency_info.keys()):
+            latencies = latency_info[fault_name]
+            for injection_time, detection_time, latency in latencies:
+                print(f"{fault_name:<30} {injection_time:<15.3f} {detection_time:<15.3f} {latency:<15.3f}")
+        
+        print("="*70 + "\n")
 
     # Defining methods to make the plots we would like to and save them.
 
@@ -556,9 +737,16 @@ class Reporter(Node):
         """Plot combined timeline showing autonomy modes, injected faults, and detected faults."""
         plt.switch_backend("Agg")
         sns.set_style("whitegrid")
+        # Set larger font size for the entire figure
+        plt.rcParams['font.size'] = 13
+        plt.rcParams['axes.titlesize'] = 14
+        plt.rcParams['axes.labelsize'] = 13
+        plt.rcParams['xtick.labelsize'] = 12
+        plt.rcParams['ytick.labelsize'] = 12
+        plt.rcParams['legend.fontsize'] = 12
         
-        fig, (ax_mode, ax_injected, ax_detected) = plt.subplots(3, 1, figsize=(8, 6), sharex=True)
-        fig.suptitle('Simulation Timeline', fontsize=18)
+        fig, (ax_mode, ax_injected, ax_detected) = plt.subplots(3, 1, figsize=(12, 6), sharex=True)
+        # fig.suptitle('Simulation Timeline', fontsize=18)
         
         # Plot 1: Autonomy Mode Timeline
         self._plot_mode_timeline_subplot(mode, time, ax_mode)
@@ -639,7 +827,7 @@ class Reporter(Node):
         y_ticks = [mode_y_pos[m] for m in unique_modes]
         # Capitalize mode names for y-axis labels
         ax.set_yticks(y_ticks)
-        ax.set_yticklabels([m.capitalize() for m in unique_modes], fontsize=14)
+        ax.set_yticklabels([m.capitalize() for m in unique_modes])
         ax.set_ylim(min(y_ticks) - 0.5, max(y_ticks) + 0.5)
         ax.set_title('Autonomy Modes')
         ax.grid(True, alpha=0.3)
@@ -692,7 +880,9 @@ class Reporter(Node):
             # but keep internal component names unchanged.
             raw_labels = list(y_positions.keys())
             display_labels = [lbl.replace("IMU", "Gyro") for lbl in raw_labels]
-            ax.set_yticklabels(display_labels, fontsize=14)
+            # Wrap long labels with new line, only two words per line
+            display_labels = ['\n'.join(lbl.split(' ')[:2]) if len(lbl.split(' ')) > 2 else lbl for lbl in display_labels]
+            ax.set_yticklabels(display_labels)
             ax.set_ylim(-0.5, len(y_positions) - 0.5)
         
         ax.set_title('Detected Faults')
@@ -734,7 +924,6 @@ class Reporter(Node):
         for fault_name in fault_names:
             color = colors[y_positions[fault_name]]
             y_pos = y_positions[fault_name]
-            
             active_start = None
             for i, time_key in enumerate(times):
                 is_active = fault_history[time_key].get(fault_name, False)
@@ -745,24 +934,20 @@ class Reporter(Node):
                 elif not is_active and active_start is not None:
                     # Fault becomes inactive
                     duration = time_key - active_start
+                    # Wrap fault name with new line every two words for better display
                     ax.barh(y_pos, duration, left=active_start, height=0.6, 
-                           color=color, alpha=0.7, label=fault_name)
-                    # removed in-bar label
-                    # ax.text(active_start + duration/2, y_pos, fault_name, 
-                    #        ha='center', va='center', fontsize=8, fontweight='bold')
+                           color=color, alpha=0.7)
                     active_start = None
             
             # Handle fault active until end
             if active_start is not None and times:
                 duration = times[-1] - active_start
                 ax.barh(y_pos, duration, left=active_start, height=0.6, 
-                       color=color, alpha=0.7, label=fault_name)
-                # removed in-bar label
-                # ax.text(active_start + duration/2, y_pos, fault_name, 
-                #        ha='center', va='center', fontsize=8, fontweight='bold')
+                       color=color, alpha=0.7)
         
+        # f_name_wrap = '\n'.join(wrap(fault_name, 15))  # wrap fault name every 15 chars
         ax.set_yticks(list(y_positions.values()))
-        ax.set_yticklabels(list(y_positions.keys()), fontsize=14)
+        ax.set_yticklabels(['\n'.join(wrap(name, 15)) for name in y_positions.keys()])
         ax.set_ylim(-0.5, len(y_positions) - 0.5)
         ax.set_title('Injected Faults')
         ax.grid(True, alpha=0.3)
@@ -783,7 +968,12 @@ def load_and_regenerate_plots(data_file_path: str, output_dir: str = None):
     
     # Create a temporary reporter instance just for plot generation
     reporter = Reporter()
-    reporter._generate_all_plots(plot_data, output_dir)
+    time = plot_data['time']
+    health = plot_data['health']
+    fault_history = plot_data['fault_history']
+    latency_info = reporter._calculate_fault_detection_latencies(health, fault_history, time)
+
+    reporter._generate_all_plots(plot_data, output_dir, latency_info)
     
     print(f"Successfully regenerated plots in: {output_dir}")
 
