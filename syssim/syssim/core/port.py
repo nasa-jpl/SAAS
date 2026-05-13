@@ -1,6 +1,17 @@
 from typing import List, Union
 from copy import deepcopy
 
+
+def _apply_fault_action(fault, value, timestamp):
+    try:
+        result = fault.action(value, timestamp)
+    except TypeError:
+        result = fault.action(value)
+
+    if isinstance(result, tuple) and len(result) == 2:
+        return result
+    return result, timestamp
+
 class InputPort:
     def __init__(self, name: str, node: "Node"):
         """Input port owned by a node.
@@ -14,6 +25,7 @@ class InputPort:
         """
         self._name = name
         self._v = None
+        self._t = None
         self._node = node
         self._faults = []
         self._connected_out_port: "OutputPort" = None
@@ -22,17 +34,23 @@ class InputPort:
         """Return the stored value."""
         return self._v
 
+    def read_with_time(self):
+        """Return the stored value and the simulation time it was produced."""
+        return self._v, self._t
+
     def add_fault(self, fault):
         """Attach a fault to the port."""
         self._faults.append(fault)
 
-    def _write(self, val):
-        """Write a value into the port applying active faults."""
+    def _write(self, val, sim_time):
+        """Write a value and time into the port applying active faults."""
         cval = deepcopy(val)
+        ctime = sim_time
         for f in self._faults:
             if f.active:
-                cval = f.action(cval)
+                cval, ctime = _apply_fault_action(f, cval, ctime)
         self._v = cval
+        self._t = ctime
 
     @property
     def name(self) -> str:
@@ -70,15 +88,16 @@ class OutputPort:
         self._input_ports: List[InputPort] = list()
         self._faults = []
 
-    def shift_out(self, val):
-        """Propagate a value to all connected inputs with fault mutation."""
+    def shift_out(self, val, sim_time):
+        """Propagate a value/time sample to all connected inputs with fault mutation."""
         cval = deepcopy(val)
+        ctime = sim_time
         for f in self._faults:
             if f.active:
-                cval = f.action(val)
+                cval, ctime = _apply_fault_action(f, cval, ctime)
 
         for p in self._input_ports:
-            p._write(cval)
+            p._write(cval, ctime)
 
     def connect_input(self, input_port: InputPort):
         """Connect this output port to an input port.

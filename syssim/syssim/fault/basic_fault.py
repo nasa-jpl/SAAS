@@ -89,6 +89,11 @@ class FaultBasic:
         """Whether the fault is active at the current simulation time."""
         return self._is_active
 
+    @property
+    def active(self) -> bool:
+        """Compatibility property used by port fault application."""
+        return self._is_active
+
     def get_name(self) -> str:
         """Return the fault name."""
         return self._name
@@ -103,7 +108,7 @@ class FaultBasic:
         else:
             self._is_active = False
 
-    def action(self, v: np.ndarray):
+    def action(self, v: np.ndarray, timestamp: float = None):
         """Apply the configured mutation to the provided value."""
         action_type = self._spec["action"]["type"]
 
@@ -157,3 +162,5 @@ class FaultBasic:
                 v[i] = np.nan
         else:
             raise Exception(f"Action type of {action_type} not known.")
+
+        return v, timestamp

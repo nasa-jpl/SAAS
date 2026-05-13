@@ -49,7 +49,15 @@ class NodeParameter:
         cval = deepcopy(self._value)
         for f in self._faults:
             if f.active:
-                cval = f.action(cval)
+                try:
+                    cres = f.action(cval, None)
+                except TypeError:
+                    cres = f.action(cval)
+
+                if isinstance(cres, tuple) and len(cres) == 2:
+                    cval, _ = cres
+                else:
+                    cval = cres
         return cval
 
     @property

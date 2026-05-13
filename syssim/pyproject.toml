@@ -9,7 +9,7 @@ dependencies = [
     "matplotlib",
     "rustworkx",
     "toml",
-    "tqdm",
+    "rich",
     "numpy"
 ]
 

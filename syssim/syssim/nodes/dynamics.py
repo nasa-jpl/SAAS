@@ -63,7 +63,7 @@ class NodeStateSpace(NodeDifferential):
 
         y = self._output(self._x, u)
 
-        self._o.y.shift_out(y)
+        self._o.y.shift_out(y, sim_time)
 
         self._t = sim_time
 

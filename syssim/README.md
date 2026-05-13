@@ -8,7 +8,7 @@ General-purpose graph-based system simulation with first-class fault injection. 
 pip install -e .
 ```
 
-Dependencies are declared in `pyproject.toml` and pulled in automatically (matplotlib, scipy, rustworkx, toml, tqdm).
+Dependencies are declared in `pyproject.toml` and pulled in automatically (matplotlib, scipy, rustworkx, toml, rich).
 
 ## Quick Start
 
@@ -33,12 +33,12 @@ plant.o.y >> scope.i.scope
 sys.simulate(t_f=2.0, dt=0.1, sim_name="demo")
 ```
 
-Run the examples for more complete setups: `python example/step/run.py` or `python example/step_fault/run.py`.
+Run the examples for more complete setups: `python example/step/run.py`, `python example/step_fault/run.py`, or `python example/integrator_chain_delay/run.py`.
 
 ## Core Concepts
 
 - **Nodes**: Units of behavior with input/output ports. Provide `initialize`, `update`, and `finalize` hooks and optional TOML-backed configuration per node name.
-- **Ports**: `InputPort` reads data; `OutputPort` pushes data to connected inputs. One output can fan out to many inputs.
+- **Ports**: `InputPort` reads data (`read`) and can also return value plus produced-at simulation time (`read_with_time`); `OutputPort` pushes timestamped samples to connected inputs. One output can fan out to many inputs.
 - **Parameters**: `NodeParameter` stores model coefficients that can also be faulted like ports.
 - **Faults**: Objects that mutate port or parameter values. Faults implement an `action` method and lifecycle hooks. Use built-ins (e.g., `FaultBasic`, `DisconnectFault`, `ZeroFault`) or subclass `Fault` for custom behavior.
 - **NodeSystem**: Holds nodes, establishes execution order via topological sort, and orchestrates simulation, scheduling node updates and fault evaluation.

@@ -1,12 +1,13 @@
-from typing import List, Union, Tuple, Dict
+from typing import List, Union, Tuple, Dict, Optional
 from os import PathLike, path, makedirs
 from datetime import datetime
 
 import rustworkx as rwx
 from rustworkx.visualization import mpl_draw
 import numpy as np
-from tqdm import tqdm
 import toml
+from rich.console import Console
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
 from syssim.core.node import Node
 from syssim.fault import FaultBasic
@@ -30,6 +31,8 @@ class NodeSystem:
         self._faults : List[Fault] = list()
         self._detected_faults = list()
         self._fault_history: Dict[float, Dict[str, bool]] = {}  # Track fault status over time
+        self._t: Optional[float] = None
+        self._initialized: bool = False
 
     def __repr__(self):
         output = ""
@@ -186,6 +189,53 @@ class NodeSystem:
         """
         return self._fault_history.copy()
 
+    def initialize(self):
+        """Initialize all nodes and faults for manual stepping."""
+        self._fault_history.clear()
+        self._detected_faults.clear()
+        self._t = 0.0
+        self._ex_plan = self.compile()
+
+        for n in self._nodes:
+            n.initialize()
+        for f in self._faults:
+            f.initialize()
+
+        self._initialized = True
+
+    def finalize(self):
+        """Finalize all nodes after manual stepping."""
+        for n in self._nodes:
+            n.finalize(fault_history=self._fault_history)
+        self._detected_faults.clear()
+        self._initialized = False
+
+    def step(self, dt: float):
+        """Advance the system by a single timestep.
+
+        Parameters
+        ----------
+        dt : float
+            Time increment in seconds.
+        """
+        if not self._initialized:
+            self.initialize()
+
+        self._t += dt
+
+        for f in self._faults:
+            f.update(self._t)
+
+        self._fault_history[self._t] = {
+            f.name: f.triggered and f.active for f in self._faults
+        }
+
+        for n in self._ex_plan:
+            if n.period is None or n.period <= 0.0:
+                n.update(self._t)
+            elif np.isclose(self._t % n.period, 0.0, atol=1e-12):
+                n.update(self._t)
+
     def simulate(
         self, t_f: float, dt=0.01, save_dir=None, sim_name=None, batches: int = 1
     ):
@@ -206,11 +256,20 @@ class NodeSystem:
             Number of realizations to run. Each batch reinitializes nodes and
             re-randomizes fault statistics.
         """
-        if batches == 1:
-            self._simulation_iterate(t_f, dt, save_dir, sim_name)
-        else:
-            for i in tqdm(range(batches), desc="Simulation Batches", position=0):
-                self._simulation_iterate(t_f, dt, save_dir, sim_name)
+        with self._create_progress() as progress:
+            if batches == 1:
+                self._simulation_iterate(t_f, dt, save_dir, sim_name, progress=progress)
+            else:
+                batch_task = progress.add_task("Simulation batches", total=batches)
+                for _ in range(batches):
+                    self._simulation_iterate(
+                        t_f,
+                        dt,
+                        save_dir,
+                        sim_name,
+                        progress=progress,
+                    )
+                    progress.advance(batch_task)
 
     def compile(self) -> List[Node]:
         """Topologically sort nodes to obtain an execution order.
@@ -233,7 +292,14 @@ class NodeSystem:
             raise Exception("Failed to compile graph. Topological cycle detected.")
         return [dg[i] for i in reversed(topo_i)]
 
-    def _simulation_iterate(self, t_f: float, dt: float, save_dir: str, sim_name: str):
+    def _simulation_iterate(
+        self,
+        t_f: float,
+        dt: float,
+        save_dir: str,
+        sim_name: str,
+        progress: Optional[Progress] = None,
+    ):
         """Run a single realization of the system.
 
         Parameters
@@ -271,9 +337,13 @@ class NodeSystem:
         for f in self._faults:
             f.initialize()
 
-        for st, ns in tqdm(
-            self._schedule.items(), leave=False, position=1, desc=f"Sim --- {sim_name}"
-        ):
+        schedule_task = None
+        if progress is not None:
+            schedule_task = progress.add_task(
+                f"Sim --- {sim_name}", total=len(self._schedule)
+            )
+
+        for st, ns in self._schedule.items():
             # print(f"Processing time step {st}...")
             # Update each fault
             for f in self._faults:
@@ -290,6 +360,12 @@ class NodeSystem:
                 if n in ns:
                     # If the node should be updated at this time, update it.
                     n.update(st)
+
+            if schedule_task is not None:
+                progress.advance(schedule_task)
+
+        if schedule_task is not None:
+            progress.remove_task(schedule_task)
 
         # Finalize all blocks with fault history
         for n in self._nodes:
@@ -342,3 +418,14 @@ class NodeSystem:
         for fault_list in self._faults.values():
             for f in fault_list:
                 f._gen_state()
+
+    def _create_progress(self) -> Progress:
+        return Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=Console(stderr=True),
+            transient=True,
+        )

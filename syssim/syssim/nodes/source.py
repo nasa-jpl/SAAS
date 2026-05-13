@@ -28,7 +28,7 @@ class NodeConstant(Node):
         super().__init__((), self._o, **kwargs)
 
     def update(self, sim_time: float):
-        self._o.constant_out.shift_out(self._v)
+        self._o.constant_out.shift_out(self._v, sim_time)
 
     @property
     def i(self):

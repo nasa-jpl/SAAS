@@ -25,8 +25,8 @@ class Fault(ABC):
         self._triggered = False
 
     @abstractmethod
-    def action(self, value: Any) -> Any:
-        """Return modified value based on the fault action at a given time."""
+    def action(self, value: Any, timestamp: float = None) -> Any:
+        """Return modified value or ``(value, timestamp)`` for this fault action."""
         pass
 
     def initialize(self):
