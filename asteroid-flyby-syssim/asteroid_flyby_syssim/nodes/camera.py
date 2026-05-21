@@ -1,6 +1,7 @@
 """Asteroid camera rendering using Mitsuba 3 and pyshtools shape models."""
 
-from typing import Any, NamedTuple
+from dataclasses import dataclass
+from typing import Any
 import numpy as np
 import pyshtools as pysh
 import mitsuba as mi
@@ -12,9 +13,8 @@ import pickle
 from pathlib import Path
 from datetime import datetime, timezone
 
-from syssim.core import Node, InputPort, OutputPort
-from syssim.core.node import NodeParameter
-from .starfield_hdri import generate_starfield_hdri
+from syssim.core import EmptySpec, InputPort, Node, NodeParameter, OutputPort, input_port, output_port, parameter
+from ..starfield_hdri import generate_starfield_hdri
 
 
 _ASTEROID_VISIBILITY_INTEGRATOR_REGISTERED = False
@@ -210,23 +210,53 @@ def _get_skyfield_resources(cache_dir: str) -> dict[str, Any]:
     return resources
 
 
-class NodeAsteroidCameraInputs(NamedTuple):
-    camera_position: InputPort
+@dataclass
+class NodeAsteroidCameraInputs:
+    """Input ports for asteroid camera rendering."""
+
+    camera_position: InputPort[np.ndarray] = input_port(np.ndarray, dtype=float, shape=(3,))
     """Camera position [x, y, z] in asteroid body frame (meters)."""
-    camera_target: InputPort
+    camera_target: InputPort[np.ndarray] = input_port(np.ndarray, dtype=float, shape=(3,))
     """Optional camera target [x, y, z] in asteroid body frame (meters)."""
 
 
-class NodeAsteroidCameraOutputs(NamedTuple):
-    image: OutputPort
+@dataclass
+class NodeAsteroidCameraOutputs:
+    """Output ports for rendered asteroid products."""
+
+    image: OutputPort[np.ndarray | None] = output_port(np.ndarray | None)
     """Rendered image as numpy array [height, width, channels]"""
-    asteroid_mask: OutputPort
+    asteroid_mask: OutputPort[np.ndarray] = output_port(np.ndarray)
     """Binary semantic mask image identifying asteroid pixels."""
-    asteroid_visible: OutputPort
+    asteroid_visible: OutputPort[bool] = output_port(bool)
     """Boolean indicating whether the asteroid intersects the frame."""
 
 
-class NodeAsteroidCamera(Node):
+@dataclass
+class NodeAsteroidCameraParameters:
+    """Faultable camera and renderer parameters."""
+
+    asteroid: NodeParameter[str] = parameter("Ceres", value_type=str)
+    """Asteroid shape model name: Ceres, Vesta, or Eros."""
+    resolution_width: NodeParameter[int] = parameter(512, value_type=int)
+    """Rendered image width in pixels."""
+    resolution_height: NodeParameter[int] = parameter(512, value_type=int)
+    """Rendered image height in pixels."""
+    fov: NodeParameter[float] = parameter(45.0, value_type=float)
+    """Perspective camera field of view in degrees."""
+    spp: NodeParameter[int] = parameter(32, value_type=int)
+    """Samples per pixel for Mitsuba rendering."""
+    look_at_origin: NodeParameter[bool] = parameter(True, value_type=bool)
+    """Whether to use asteroid center as the fallback camera target."""
+    scale_factor: NodeParameter[float] = parameter(0.001, value_type=float)
+    """Scene scale factor applied to geometry and camera positions."""
+    use_integrator_mask: NodeParameter[bool] = parameter(False, value_type=bool)
+    """Whether to render masks with the Mitsuba visibility integrator."""
+
+
+class NodeAsteroidCamera(
+    Node[NodeAsteroidCameraInputs, NodeAsteroidCameraOutputs, NodeAsteroidCameraParameters, EmptySpec]
+):
     """Render asteroid from a spacecraft-mounted camera using Mitsuba 3.
 
     This node renders a view of an asteroid from a camera position using
@@ -243,15 +273,9 @@ class NodeAsteroidCamera(Node):
     }
     FIBONACCI_SPHERE_POINTS = 15000
 
-    class Parameters(NamedTuple):
-        asteroid: NodeParameter
-        resolution_width: NodeParameter
-        resolution_height: NodeParameter
-        fov: NodeParameter
-        spp: NodeParameter  # samples per pixel
-        look_at_origin: NodeParameter
-        scale_factor: NodeParameter
-        use_integrator_mask: NodeParameter
+    Inputs = NodeAsteroidCameraInputs
+    Outputs = NodeAsteroidCameraOutputs
+    Parameters = NodeAsteroidCameraParameters
 
     @staticmethod
     def _select_mitsuba_variant() -> str:
@@ -315,26 +339,18 @@ class NodeAsteroidCamera(Node):
                 f"Unknown asteroid '{asteroid}'. Choose from: {list(self.ASTEROID_SHAPE_DATASETS.keys())}"
             )
 
-        self._i = NodeAsteroidCameraInputs(
-            InputPort("camera_position", self),
-            InputPort("camera_target", self),
-        )
-        self._o = NodeAsteroidCameraOutputs(
-            OutputPort("image", self),
-            OutputPort("asteroid_mask", self),
-            OutputPort("asteroid_visible", self),
-        )
-
-        self._p = self.Parameters(
-            NodeParameter("asteroid", asteroid),
-            NodeParameter("resolution_width", int(resolution_width)),
-            NodeParameter("resolution_height", int(resolution_height)),
-            NodeParameter("fov", float(fov)),
-            NodeParameter("spp", int(spp)),
-            NodeParameter("look_at_origin", bool(look_at_origin)),
-            NodeParameter("scale_factor", float(scale_factor)),
-            NodeParameter("use_integrator_mask", bool(use_integrator_mask)),
-        )
+        super().__init__(**kwargs)
+        self._i = self.i
+        self._o = self.o
+        self._p = self.p
+        self.p.asteroid.set_nominal(asteroid)
+        self.p.resolution_width.set_nominal(int(resolution_width))
+        self.p.resolution_height.set_nominal(int(resolution_height))
+        self.p.fov.set_nominal(float(fov))
+        self.p.spp.set_nominal(int(spp))
+        self.p.look_at_origin.set_nominal(bool(look_at_origin))
+        self.p.scale_factor.set_nominal(float(scale_factor))
+        self.p.use_integrator_mask.set_nominal(bool(use_integrator_mask))
 
         # Auto-select rendering backend: CUDA GPU if available, CPU otherwise.
         selected_variant = self._select_mitsuba_variant()
@@ -363,8 +379,6 @@ class NodeAsteroidCamera(Node):
         # Load shape model and create mesh
         self._load_shape_model()
         self._create_mitsuba_scene()
-
-        super().__init__(self._i, self._o, self._p, **kwargs)
 
     def _load_shape_model(self):
         """Load asteroid shape model from pyshtools (cached)."""
@@ -829,18 +843,18 @@ class NodeAsteroidCamera(Node):
             Current simulation time in seconds
         """
         # Read camera position from input port
-        camera_pos = self._i.camera_position.read()
+        camera_pos = self.i.camera_position.read().value
 
         if camera_pos is None or np.any(np.isnan(camera_pos)):
             # No valid camera position, output None
-            self._o.image.shift_out(None, sim_time)
+            self.o.image.write(None, sim_time)
             return
 
         # Apply scene scaling to camera position
         camera_pos_scaled = camera_pos * self._p.scale_factor.value
 
         # Determine camera target from input if present, otherwise fallback.
-        camera_target_in = self._i.camera_target.read()
+        camera_target_in = self.i.camera_target.read().value
         if camera_target_in is not None and not np.any(np.isnan(camera_target_in)):
             camera_target = np.array(camera_target_in, dtype=float) * self._p.scale_factor.value
         elif self._p.look_at_origin.value:
@@ -884,18 +898,6 @@ class NodeAsteroidCamera(Node):
             )
 
         # Output the rendered image
-        self._o.image.shift_out(image_8bit, sim_time)
-        self._o.asteroid_mask.shift_out(mask_8bit, sim_time)
-        self._o.asteroid_visible.shift_out(asteroid_visible, sim_time)
-
-    @property
-    def i(self):
-        return self._i
-
-    @property
-    def o(self):
-        return self._o
-
-    @property
-    def p(self):
-        return self._p
+        self.o.image.write(image_8bit, sim_time)
+        self.o.asteroid_mask.write(mask_8bit, sim_time)
+        self.o.asteroid_visible.write(asteroid_visible, sim_time)

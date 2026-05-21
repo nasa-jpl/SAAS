@@ -10,26 +10,37 @@ References:
       Equipment for Processing Printed Circuit Boards"
 """
 
-from typing import NamedTuple, Optional
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
-from syssim.core import Node, InputPort, OutputPort
-from syssim.core.node import NodeParameter
+from syssim.core import InputPort, Node, NodeParameter, OutputPort, input_port, output_port, parameter
 
 
-class NodeGyroscopeInputs(NamedTuple):
+@dataclass
+class NodeGyroscopeInputs:
     """Input ports for gyroscope node."""
 
-    angular_velocity: InputPort
+    angular_velocity: InputPort[np.ndarray] = input_port(np.ndarray, dtype=float, shape=(3,))
     """True angular velocity [rad/s] in body frame, shape (3,)"""
 
 
-class NodeGyroscopeOutputs(NamedTuple):
+@dataclass
+class NodeGyroscopeOutputs:
     """Output ports for gyroscope node."""
 
-    measurement: OutputPort
+    measurement: OutputPort[np.ndarray] = output_port(np.ndarray, dtype=float, shape=(3,))
     """Measured angular velocity [rad/s] with noise/bias, shape (3,)"""
+
+
+@dataclass
+class NodeGyroscopeParameters:
+    """Faultable gyroscope calibration parameters."""
+
+    bias_rad_s: NodeParameter[np.ndarray] = parameter(default_factory=lambda: np.zeros(3), value_type=np.ndarray, dtype=float, shape=(3,))
+    """Additive gyroscope bias [rad/s] for x, y, z body axes."""
+    scale_errors: NodeParameter[np.ndarray] = parameter(default_factory=lambda: np.zeros(3), value_type=np.ndarray, dtype=float, shape=(3,))
+    """Multiplicative scale-factor error for x, y, z body axes."""
 
 
 @dataclass
@@ -60,14 +71,20 @@ class GyroscopeConfig:
     """
 
     bias_rad_s: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    """Constant additive bias [rad/s] for x, y, z axes."""
     scale_errors: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    """Fractional scale-factor error for x, y, z axes."""
     white_noise_std_rad_s: float = 1e-4
+    """Standard deviation of white angular-rate noise [rad/s]."""
     bias_random_walk_std_rad_s2: float = 1e-6
+    """Standard deviation of bias random-walk acceleration [rad/s^2]."""
     sample_rate_hz: float = 100.0
+    """Nominal gyroscope sampling rate [Hz]."""
     rng_seed: Optional[int] = None
+    """Optional seed for deterministic sensor noise generation."""
 
 
-class NodeGyroscope(Node):
+class NodeGyroscope(Node[NodeGyroscopeInputs, NodeGyroscopeOutputs, NodeGyroscopeParameters, GyroscopeConfig]):
     """Three-axis MEMS gyroscope sensor node.
 
     Simulates a real gyroscope by adding realistic error sources:
@@ -83,6 +100,11 @@ class NodeGyroscope(Node):
     Errors are independent per axis. Bias and scale factors can be faulted
     via the NodeParameter system.
     """
+
+    Inputs = NodeGyroscopeInputs
+    Outputs = NodeGyroscopeOutputs
+    Parameters = NodeGyroscopeParameters
+    Config = GyroscopeConfig
 
     def __init__(
         self,
@@ -100,36 +122,22 @@ class NodeGyroscope(Node):
         name : str
             Name of this node (used for configuration file lookup).
         **kwargs
-            Forwarded to parent Node class (e.g., sample_frequency, config file path).
+            Forwarded to parent Node class, such as sample period/frequency.
         """
-        if config is None:
-            config = GyroscopeConfig()
-        self._config = config
+        super().__init__(config=config, name=name, **kwargs)
+        self._i = self.i
+        self._o = self.o
+        self._p = self.p
 
-        # Save config values before calling super().__init__() because the
-        # syssim Node base class may overwrite self._config with a dict
-        # loaded from a TOML config file.
-        self._bias_rad_s = tuple(config.bias_rad_s)
-        self._scale_errors = tuple(config.scale_errors)
-        self._white_noise_std_rad_s = config.white_noise_std_rad_s
-        self._bias_random_walk_std_rad_s2 = config.bias_random_walk_std_rad_s2
-        self._sample_rate_hz = config.sample_rate_hz
-        self._rng_seed = config.rng_seed
+        self._white_noise_std_rad_s = self.config.white_noise_std_rad_s
+        self._bias_random_walk_std_rad_s2 = self.config.bias_random_walk_std_rad_s2
+        self._sample_rate_hz = self.config.sample_rate_hz
+        self._rng_seed = self.config.rng_seed
 
-        # Define input/output ports
-        self._i = NodeGyroscopeInputs(InputPort("angular_velocity", self))
-        self._o = NodeGyroscopeOutputs(OutputPort("measurement", self))
-
-        # Create faultable parameters for bias and scale errors
-        self._param_bias = NodeParameter(
-            "bias_rad_s", np.array(config.bias_rad_s, dtype=float)
-        )
-        self._param_scale = NodeParameter(
-            "scale_errors", np.array(config.scale_errors, dtype=float)
-        )
-
-        # Initialize parent Node
-        super().__init__(self._i, self._o, parameters=(self._param_bias, self._param_scale), name=name, **kwargs)
+        self.p.bias_rad_s.set_nominal(np.array(self.config.bias_rad_s, dtype=float))
+        self.p.scale_errors.set_nominal(np.array(self.config.scale_errors, dtype=float))
+        self._param_bias = self.p.bias_rad_s
+        self._param_scale = self.p.scale_errors
 
     def initialize(self):
         """Initialize gyroscope state before simulation.
@@ -156,7 +164,7 @@ class NodeGyroscope(Node):
             Current simulation time (seconds).
         """
         # Read true angular velocity from input port
-        w_true = self._i.angular_velocity.read()
+        w_true = self.i.angular_velocity.read().value
         if w_true is None:
             # No input connected; assume zero rate
             w_true = np.array([0.0, 0.0, 0.0], dtype=float)
@@ -187,14 +195,4 @@ class NodeGyroscope(Node):
         w_measured += white_noise
 
         # ---- Output measurement ----
-        self._o.measurement.shift_out(w_measured, sim_time)
-
-    @property
-    def i(self) -> NodeGyroscopeInputs:
-        """Input ports."""
-        return self._i
-
-    @property
-    def o(self) -> NodeGyroscopeOutputs:
-        """Output ports."""
-        return self._o
+        self.o.measurement.write(w_measured, sim_time)

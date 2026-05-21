@@ -10,12 +10,11 @@ import pytest
 
 from syssim.core import InputPort
 
-from asteroid_flyby_syssim.asteroid_gravity import NodeAsteroidGravity
+from asteroid_flyby_syssim.nodes import NodeAsteroidGravity
 
 
 def _seed_input_port(port, value, sim_time: float = 0.0):
-    port._v = np.array(value, dtype=float)
-    port._t = sim_time
+    port.write(np.array(value, dtype=float), sim_time)
 
 
 def _attach_output_sink(output_port):
@@ -56,7 +55,7 @@ class TestPointMassRegression:
             # Evaluate gravity model
             _seed_input_port(gravity_node._i.position, position, sim_time=0.0)
             gravity_node.update(sim_time=0.0)
-            accel_model = accel_sink.read()
+            accel_model = accel_sink.read().value
             
             # Expected Keplerian acceleration
             r_mag = np.linalg.norm(position)
@@ -89,7 +88,7 @@ class TestPointMassRegression:
             position = np.array([r_norm, 0.0, 0.0])
             _seed_input_port(gravity_node._i.position, position, sim_time=0.0)
             gravity_node.update(sim_time=0.0)
-            accel = accel_sink.read()
+            accel = accel_sink.read().value
             
             # Acceleration magnitude
             accel_mag = np.linalg.norm(accel)
@@ -133,7 +132,7 @@ class TestFarFieldAsymptotics:
             position = np.array([r_norm, 0.0, 0.0])
             _seed_input_port(gravity_node._i.position, position, sim_time=0.0)
             gravity_node.update(sim_time=0.0)
-            accel = accel_sink.read()
+            accel = accel_sink.read().value
             
             accel_mag = np.linalg.norm(accel)
             
@@ -181,7 +180,7 @@ class TestFarFieldAsymptotics:
         
         _seed_input_port(gravity_node._i.position, position, sim_time=0.0)
         gravity_node.update(sim_time=0.0)
-        accel = accel_sink.read()
+        accel = accel_sink.read().value
         
         # Radial and transverse components in spherical frame
         accel_mag = np.linalg.norm(accel)
@@ -224,7 +223,7 @@ class TestFarFieldAsymptotics:
             
             _seed_input_port(gravity_node._i.position, position, sim_time=0.0)
             gravity_node.update(sim_time=0.0)
-            accel = accel_sink.read()
+            accel = accel_sink.read().value
             
             accel_mag = np.linalg.norm(accel)
             normalized = accel_mag * r_norm**2 / mu
@@ -259,7 +258,7 @@ class TestOmegaEffect:
         
         _seed_input_port(gravity_node._i.position, position, sim_time=0.0)
         gravity_node.update(sim_time=0.0)
-        accel = accel_sink.read()
+        accel = accel_sink.read().value
         
         # Should be purely gravitational, no centrifugal term
         # Centrifugal acceleration would be omega^2 * rho (perpendicular to spin axis)
@@ -316,7 +315,7 @@ class TestGravityNodeInterface:
         accel_sink = _attach_output_sink(node._o.gravity_accel)
         _seed_input_port(node._i.position, position_near, sim_time=0.0)
         node.update(sim_time=0.0)
-        accel_near = accel_sink.read()
+        accel_near = accel_sink.read().value
         
         # Should be zero or very small (handled by singularity check in update)
         accel_mag = np.linalg.norm(accel_near)
@@ -333,7 +332,7 @@ class TestGravityNodeInterface:
         accel_sink = _attach_output_sink(node._o.gravity_accel)
         _seed_input_port(node._i.position, position_nan, sim_time=0.0)
         node.update(sim_time=0.0)
-        accel = accel_sink.read()
+        accel = accel_sink.read().value
         
         # Should be [0, 0, 0], not [NaN, ...]
         assert np.allclose(accel, [0.0, 0.0, 0.0]), (

@@ -581,7 +581,7 @@ def create_environment(args: TrainArgs) -> gym.Env:
     env : gym.Env
         Asteroid tracking environment.
     """
-    from .asteroid_camera import NodeAsteroidCamera
+    from .nodes import NodeAsteroidCamera
     from .flyby_sim import (
         AsteroidConfig,
         ControllerConfig,

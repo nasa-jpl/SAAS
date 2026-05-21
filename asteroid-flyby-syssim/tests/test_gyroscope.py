@@ -3,9 +3,8 @@
 import numpy as np
 import pytest
 
-from asteroid_flyby_syssim.gyroscope import NodeGyroscope, GyroscopeConfig
+from asteroid_flyby_syssim.nodes import GyroscopeConfig, NodeGyroscope
 from syssim.core import InputPort, OutputPort
-from syssim.core.fault import Fault
 
 
 def test_gyroscope_output_differs_from_input():
@@ -33,7 +32,7 @@ def test_gyroscope_output_differs_from_input():
     output_port.shift_out(w_true, 0.0)
     gyro.update(0.0)
 
-    w_meas = gyro.o.measurement.read()
+    w_meas = gyro.o.measurement.read().value
     assert w_meas is not None
     assert not np.allclose(w_meas, w_true), "Gyro output should differ from zero input (bias/noise present)"
     assert w_meas.shape == (3,), "Gyro output should be 3D vector"
@@ -43,7 +42,7 @@ def test_gyroscope_output_differs_from_input():
     output_port.shift_out(w_true_nonzero, 0.01)
     gyro.update(0.01)
 
-    w_meas2 = gyro.o.measurement.read()
+    w_meas2 = gyro.o.measurement.read().value
     assert not np.allclose(w_meas2, w_true_nonzero), "Noisy gyro output should differ from true rate"
 
 
@@ -75,7 +74,7 @@ def test_gyroscope_scale_factor_error():
     output_port.shift_out(w_true, 0.0)
     gyro.update(0.0)
 
-    w_meas = gyro.o.measurement.read()
+    w_meas = gyro.o.measurement.read().value
     expected = w_true * (1.0 + scale_error)  # Should be scaled by (1 + 5%)
     assert np.allclose(w_meas, expected, atol=1e-6), \
         f"Expected {expected}, got {w_meas}"
@@ -109,7 +108,7 @@ def test_gyroscope_bias():
     output_port.shift_out(w_true, 0.0)
     gyro.update(0.0)
 
-    w_meas = gyro.o.measurement.read()
+    w_meas = gyro.o.measurement.read().value
     assert np.allclose(w_meas, bias, atol=1e-6), \
         f"Expected bias {bias}, got {w_meas}"
 
@@ -143,7 +142,7 @@ def test_gyroscope_random_walk():
     for i in range(100):
         output_port.shift_out(w_true, float(i) * 0.01)
         gyro.update(float(i) * 0.01)
-        w_meas = gyro.o.measurement.read()
+        w_meas = gyro.o.measurement.read().value
         w_meas_history.append(w_meas.copy())
 
     w_meas_history = np.array(w_meas_history)
@@ -176,26 +175,16 @@ def test_gyroscope_fault_injection():
 
     gyro.initialize()
 
-    # Add a fault that sets bias to [0.1, 0.0, 0.0]
-    def fault_action(bias_val):
-        bias_val[0] = 0.1
-        return bias_val
-
-    # Create and attach fault to bias parameter
-    fault = Fault(name="bias_fault", active=False, action=fault_action, on_object=gyro._param_bias)
-    gyro._param_bias.add_fault(fault)
-
     # Test without fault
     w_true = np.array([0.0, 0.0, 0.0], dtype=float)
     output_port.shift_out(w_true, 0.0)
     gyro.update(0.0)
-    w_meas_no_fault = gyro.o.measurement.read()
+    w_meas_no_fault = gyro.o.measurement.read().value
 
-    # Activate fault
-    fault.active = True
+    gyro.p.bias_rad_s.set(np.array([0.1, 0.0, 0.0], dtype=float))
     output_port.shift_out(w_true, 0.01)
     gyro.update(0.01)
-    w_meas_with_fault = gyro.o.measurement.read()
+    w_meas_with_fault = gyro.o.measurement.read().value
 
     # With fault, first component should be 0.1
     assert w_meas_with_fault[0] > w_meas_no_fault[0], \

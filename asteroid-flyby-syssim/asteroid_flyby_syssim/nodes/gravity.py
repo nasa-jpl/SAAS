@@ -1,32 +1,41 @@
 """Asteroid gravitational force calculation using pyshtools spherical harmonics."""
 
-from typing import NamedTuple
+from dataclasses import dataclass
 
 import numpy as np
 import pyshtools as pysh
 
-from syssim.core import InputPort, Node, OutputPort
+from syssim.core import EmptySpec, InputPort, Node, OutputPort, input_port, output_port
 
 
 # Process-level cache to avoid repeated dataset loading for parallel RL envs.
 _GRAVITY_MODEL_CACHE: dict[tuple[str, int | None], object] = {}
 
 
-class NodeAsteroidGravityInputs(NamedTuple):
-    position: InputPort
+@dataclass
+class NodeAsteroidGravityInputs:
+    """Input ports for asteroid gravity evaluation."""
+
+    position: InputPort[np.ndarray] = input_port(np.ndarray, dtype=float, shape=(3,))
     """Position vector [x, y, z] in asteroid body frame (meters)."""
 
 
-class NodeAsteroidGravityOutputs(NamedTuple):
-    gravity_accel: OutputPort
+@dataclass
+class NodeAsteroidGravityOutputs:
+    """Output ports for asteroid gravity evaluation."""
+
+    gravity_accel: OutputPort[np.ndarray] = output_port(np.ndarray, dtype=float, shape=(3,))
     """Gravitational acceleration vector [ax, ay, az] in asteroid body frame (m/s^2)."""
 
 
-class NodeAsteroidGravity(Node):
+class NodeAsteroidGravity(Node[NodeAsteroidGravityInputs, NodeAsteroidGravityOutputs, EmptySpec, EmptySpec]):
     """Calculate gravitational acceleration from asteroid spherical harmonics.
 
     Supported asteroids: Ceres, Vesta, Eros.
     """
+
+    Inputs = NodeAsteroidGravityInputs
+    Outputs = NodeAsteroidGravityOutputs
 
     ASTEROID_DATASETS = {
         "Ceres": "CERES18D",  # JPL 18 degree gravity model
@@ -44,10 +53,9 @@ class NodeAsteroidGravity(Node):
         self._lmax = lmax
         self._setup_gravity_model()
 
-        self._i = NodeAsteroidGravityInputs(InputPort("position", self))
-        self._o = NodeAsteroidGravityOutputs(OutputPort("gravity_accel", self))
-
-        super().__init__(self._i, self._o, **kwargs)
+        super().__init__(**kwargs)
+        self._i = self.i
+        self._o = self.o
 
     def _setup_gravity_model(self):
         """Load spherical harmonic gravity model from pyshtools datasets."""
@@ -55,6 +63,10 @@ class NodeAsteroidGravity(Node):
         cached_model = _GRAVITY_MODEL_CACHE.get(cache_key)
         if cached_model is not None:
             self._gravity_model = cached_model
+            try:
+                self._gravity_model.omega = 0.0
+            except Exception:
+                pass
             self._max_degree = self._gravity_model.lmax
             return
 
@@ -74,6 +86,10 @@ class NodeAsteroidGravity(Node):
                 model = pysh.datasets.Eros.JGE15A01()
 
         self._gravity_model = model
+        try:
+            self._gravity_model.omega = 0.0
+        except Exception:
+            pass
         _GRAVITY_MODEL_CACHE[cache_key] = model
 
         self._max_degree = self._gravity_model.lmax
@@ -84,16 +100,16 @@ class NodeAsteroidGravity(Node):
 
     def update(self, sim_time: float):
         """Compute gravitational acceleration at current position."""
-        position = self._i.position.read()
+        position = self.i.position.read().value
 
         if position is None or np.any(np.isnan(position)):
-            self._o.gravity_accel.shift_out(np.array([0.0, 0.0, 0.0]), sim_time)
+            self.o.gravity_accel.write(np.array([0.0, 0.0, 0.0]), sim_time)
             return
 
         x, y, z = position
         r = np.sqrt(x**2 + y**2 + z**2)
         if r < 1.0:
-            self._o.gravity_accel.shift_out(np.array([0.0, 0.0, 0.0]), sim_time)
+            self.o.gravity_accel.write(np.array([0.0, 0.0, 0.0]), sim_time)
             return
 
         lat = np.degrees(np.arcsin(z / r))
@@ -123,13 +139,5 @@ class NodeAsteroidGravity(Node):
         a_y = a_r * sin_theta * sin_phi + a_theta * cos_theta * sin_phi + a_phi * cos_phi
         a_z = a_r * cos_theta - a_theta * sin_theta
 
-        accel = np.array([-a_x, -a_y, -a_z])
-        self._o.gravity_accel.shift_out(accel, sim_time)
-
-    @property
-    def i(self):
-        return self._i
-
-    @property
-    def o(self):
-        return self._o
+        accel = np.array([a_x, a_y, a_z])
+        self.o.gravity_accel.write(accel, sim_time)
