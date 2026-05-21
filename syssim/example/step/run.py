@@ -1,6 +1,3 @@
-#! python
-import sys
-
 import numpy as np
 from scipy import signal
 import matplotlib.pyplot as plt
@@ -8,14 +5,11 @@ import matplotlib.pyplot as plt
 from syssim.core import NodeSystem
 from syssim.nodes.dynamics import NodeStateSpace
 from syssim.nodes.source import NodeConstant
-from syssim.nodes.viz import NodeScope
+from syssim.nodes.viz import NodeScope, NodeScopeConfig
 
 
 """ 
 An example script showing how to build a system that simulate the step response of an LTI System. This is compared to the result produced by the well known scientific computing library Scipy.
-
-Run this script as:
-python run.py 'path to config.toml'
 """
 
 # Setup system in scipy
@@ -23,15 +17,15 @@ lti = signal.lti([1.0], [1.0, 1.0])
 t, y = signal.step(lti, T=np.linspace(0, 10, 1000))
 
 # Setup system in syssim
-node_step = NodeConstant(np.array([1]), name="step-source")
+node_step = NodeConstant(np.array([1.0]), name="step-source")
 node_lti = NodeStateSpace(
-    np.array([[-1]]),
-    np.array([[1]]),
-    np.array([[1]]),
-    np.array([0]),
+    a=np.array([[-1.0]]),
+    b=np.array([[1.0]]),
+    c=np.array([[1.0]]),
+    x0=np.array([0.0]),
     name="state-space-filter",
 )
-node_scope = NodeScope(name="scope", config=sys.argv[1])
+node_scope = NodeScope(name="scope", config=NodeScopeConfig(show=True))
 
 # Setup system by adding nodes and specifying connections
 n_sys = NodeSystem()
@@ -41,7 +35,7 @@ n_sys.add_node(node_scope)
 
 
 node_step.o.constant_out >> node_lti.i.u
-node_scope.i.scope << node_lti.o.y
+node_lti.o.y >> node_scope.i.scope
 
 # Can print the system to show some info about it...
 print(n_sys)

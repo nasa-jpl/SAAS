@@ -1,431 +1,267 @@
-from typing import List, Union, Tuple, Dict, Optional
-from os import PathLike, path, makedirs
+from __future__ import annotations
+
 from datetime import datetime
+from fractions import Fraction
+from math import gcd, lcm
+from pathlib import Path
+from typing import Iterable
 
 import rustworkx as rwx
-from rustworkx.visualization import mpl_draw
-import numpy as np
-import toml
-from rich.console import Console
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
+from syssim.core.fault import Fault, FaultContext
+from syssim.core.logging import CsvSimulationLogger
 from syssim.core.node import Node
-from syssim.fault import FaultBasic
-from syssim.core.fault import Fault
+from syssim.core.port import InputPort, OutputPort, PortSample
 
 
 class NodeSystem:
-    def __init__(self):
-        """Simulatable collection of nodes connected by ports.
+    """Collection of connected nodes, faults, schedules, and logs."""
 
-        The system owns all nodes, computes an execution order by topological
-        sort, evaluates faults, and iterates the simulation timeline.
+    def __init__(self, *, strict_types: bool = False, enable_faults: bool = True):
+        self.strict_types = bool(strict_types)
+        self.enable_faults = bool(enable_faults)
+        self._nodes: list[Node] = []
+        self._faults: list[Fault] = []
+        self._detected_faults: list[tuple[str, float]] = []
+        self._fault_history: dict[float, dict[str, bool]] = {}
+        self._ex_plan: list[Node] = []
+        self._period_steps: dict[Node, int] = {}
+        self._base_dt = 0.01
+        self._base_dt_fraction = Fraction(1, 100)
+        self._t = 0.0
+        self._step_index = 0
+        self._initialized = False
+        self._output_dir: Path | None = None
+        self._logger: CsvSimulationLogger | None = None
 
-        Notes
-        -----
-        This class is analogous to a Simulink diagram: add nodes, connect
-        their ports, register faults, then call :meth:`simulate`.
-        """
-        self._ex_plan: List[Node] = None
-        self._nodes: List[Node] = list()
-        self._faults : List[Fault] = list()
-        self._detected_faults = list()
-        self._fault_history: Dict[float, Dict[str, bool]] = {}  # Track fault status over time
-        self._t: Optional[float] = None
-        self._initialized: bool = False
+    def __repr__(self) -> str:
+        lines = []
+        for node in self._nodes:
+            ports = [port.attr_name for port in node.iter_ports()]
+            lines.append(f"{node.name} = {node.__class__.__name__}: {', '.join(ports)}")
+        return "\n".join(lines)
 
-    def __repr__(self):
-        output = ""
-        for n in self._nodes:
-            output += f"{n.name} = {n.__class__.__name__}:\n\t"
-            for p in n.i:
-                output += f"{p.name}\n\t"
-            for p in n.o:
-                output += f"{p.name}\n\t"
-            output += "\n"
-        return output
+    @property
+    def nodes(self) -> tuple[Node, ...]:
+        return tuple(self._nodes)
 
-    def add_node(self, n: Node):
-        """Register a node with the system.
+    @property
+    def faults(self) -> tuple[Fault, ...]:
+        return tuple(self._faults)
 
-        Parameters
-        ----------
-        n : Node
-            Node instance to register.
+    def add_node(self, node: Node) -> Node:
+        names = {item.name for item in self._nodes}
+        if node.name is None:
+            node.name = self._default_name(node.__class__.__name__, names)
+        elif node.name in names:
+            raise ValueError(f"Node with name {node.name!r} is already registered")
+        node._system = self
+        node.set_strict_types(self.strict_types)
+        self._nodes.append(node)
+        return node
 
-        Raises
-        ------
-        Exception
-            If a node with the same name already exists in the system.
-        """
-        names = [n.name for n in self._nodes]
-        if n.name == None:
-            node_type = n.__class__.__name__
-            i = 1
-            default_name = f"{node_type}-{i}"
-            while default_name in names:
-                i += 1
-                default_name = f"{node_type}-{i}"
-            n.name = default_name
-        elif n.name in names:
-            raise Exception(
-                f"Node with name {n.name} already in diagram. Cannot add node."
-            )
-
-        self._nodes.append(n)
-        n._system = self
-
-    def add_faults(self, fault : Union[Fault, List[Fault]]):
-        """Register one or more faults.
-
-        Parameters
-        ----------
-        fault : Fault or list of Fault
-            Faults that have already been attached to a port or parameter.
-
-        Raises
-        ------
-        Exception
-            If a provided object is not an instance of :class:`Fault`.
-        """
-        if isinstance(fault, Fault):
+    def add_faults(self, faults: Fault | Iterable[Fault]) -> None:
+        if isinstance(faults, Fault):
+            faults = (faults,)
+        names = {fault.name for fault in self._faults if fault.name is not None}
+        for fault in faults:
+            if not isinstance(fault, Fault):
+                raise TypeError("add_faults expects Fault instances")
+            if fault.name is None:
+                fault.name = self._default_name(fault.__class__.__name__, names)
+            elif fault.name in names:
+                raise ValueError(f"Fault with name {fault.name!r} is already registered")
+            names.add(fault.name)
             self._faults.append(fault)
-        else:
-            for f in fault:
-                if isinstance(f, Fault):
-                    self._faults.append(f)
-                else:
-                    raise Exception(
-                        "Faults must be of type Fault or a subclass of Fault."
-                    )
 
-    def detect_fault(self, name: str, time: float):
-        """Record a detected fault event.
+    def detect_fault(self, name: str, time: float) -> None:
+        self._detected_faults.append((name, float(time)))
 
-        Parameters
-        ----------
-        name : str
-            Name of the detected fault.
-        time : float
-            Simulation time of the detection.
-        """
-        self._detected_faults.append((name, time))
+    def get_node(self, node_name: str) -> Node | None:
+        return next((node for node in self._nodes if node.name == node_name), None)
 
-    def get_node(self, node_name: str) -> Node:
-        """Return a node by name.
+    def get_faults(self) -> list[Fault]:
+        return list(self._faults)
 
-        Parameters
-        ----------
-        node_name : str
-            Name of the node.
+    def get_fault_detections(self) -> list[tuple[str, float]]:
+        return list(self._detected_faults)
 
-        Returns
-        -------
-        Node
-            Matching node or ``None`` if not present.
-        """
-        for n in self._nodes:
-            if n.name == node_name:
-                return n
-    # NOTE Deprecated for now
-    # def get_faults(self, node: Node) -> List:
-    #     """Get all the fauts registered for a given node in the system
+    def get_fault_history(self) -> dict[float, dict[str, bool]]:
+        return dict(self._fault_history)
 
-    #     Args:
-    #         node (Node): the node
+    def get_output_dir(self) -> str | None:
+        return None if self._output_dir is None else str(self._output_dir)
 
-    #     Returns:
-    #         List[Faults]: list of faults for this node
-    #     """
-    #     return self._faults[node]
-
-    def get_fault_detections(self) -> List[Tuple[str, float]]:
-        """Return all fault detections.
-
-        Returns
-        -------
-        list of tuple
-            Pairs of fault name and detection time.
-        """
-        return self._detected_faults
-
-    def get_faults(self) -> List:
-        """Return registered faults.
-
-        Returns
-        -------
-        list of Fault
-            Faults attached to the system.
-        """
-        return self._faults
-
-    def get_output_dir(self) -> str:
-        """Directory path for simulation outputs.
-
-        Returns
-        -------
-        str or None
-            Full path to the run-specific output directory, or ``None`` if not
-            set.
-        """
-        if (
-            self._sim_name != None
-            and self._sim_start_time != None
-            and self._save_dir != None
-        ):
-            return f"{self._save_dir}/{self._sim_name}-{self._sim_start_time}/".replace(
-                " ", "-"
-            )
-        else:
-            return None
-
-    def get_fault_history(self) -> Dict[float, Dict[str, bool]]:
-        """Return the recorded fault activation timeline.
-
-        Returns
-        -------
-        dict
-            Mapping from simulation time to ``{fault_name: active}``.
-        """
-        return self._fault_history.copy()
-
-    def initialize(self):
-        """Initialize all nodes and faults for manual stepping."""
+    def initialize(self, dt: float | None = None) -> None:
+        self._prepare_timing(dt)
+        self._ex_plan = self.compile()
+        self._t = 0.0
+        self._step_index = 0
         self._fault_history.clear()
         self._detected_faults.clear()
-        self._t = 0.0
-        self._ex_plan = self.compile()
-
-        for n in self._nodes:
-            n.initialize()
-        for f in self._faults:
-            f.initialize()
-
+        for node in self._nodes:
+            for parameter in node.iter_parameters():
+                parameter.reset()
+            node.initialize()
+        for fault in self._faults:
+            fault.initialize()
         self._initialized = True
 
-    def finalize(self):
-        """Finalize all nodes after manual stepping."""
-        for n in self._nodes:
-            n.finalize(fault_history=self._fault_history)
-        self._detected_faults.clear()
+    def step(self, dt: float | None = None) -> dict[str, PortSample]:
+        if not self._initialized:
+            self.initialize(dt)
+        step_dt = self._base_dt if dt is None else float(dt)
+        self._t = round(self._t + step_dt, 12)
+        self._step_index += max(1, round(step_dt / self._base_dt))
+        self._run_time(self._t)
+        return self.samples()
+
+    def finalize(self) -> None:
+        for node in self._nodes:
+            node.finalize(fault_history=self._fault_history)
+        if self._logger is not None:
+            self._logger.close()
+            self._logger = None
         self._initialized = False
 
-    def step(self, dt: float):
-        """Advance the system by a single timestep.
-
-        Parameters
-        ----------
-        dt : float
-            Time increment in seconds.
-        """
-        if not self._initialized:
-            self.initialize()
-
-        self._t += dt
-
-        for f in self._faults:
-            f.update(self._t)
-
-        self._fault_history[self._t] = {
-            f.name: f.triggered and f.active for f in self._faults
-        }
-
-        for n in self._ex_plan:
-            if n.period is None or n.period <= 0.0:
-                n.update(self._t)
-            elif np.isclose(self._t % n.period, 0.0, atol=1e-12):
-                n.update(self._t)
-
     def simulate(
-        self, t_f: float, dt=0.01, save_dir=None, sim_name=None, batches: int = 1
-    ):
-        """Run one or more simulation batches.
-
-        Parameters
-        ----------
-        t_f : float
-            Final simulation time (exclusive).
-        dt : float, optional
-            Default node period when not explicitly set on a node, by default
-            0.01.
-        save_dir : str, optional
-            Directory where results (plots, artifacts) should be saved.
-        sim_name : str, optional
-            Name of the simulation run, used to build the output directory.
-        batches : int, optional
-            Number of realizations to run. Each batch reinitializes nodes and
-            re-randomizes fault statistics.
-        """
-        with self._create_progress() as progress:
-            if batches == 1:
-                self._simulation_iterate(t_f, dt, save_dir, sim_name, progress=progress)
-            else:
-                batch_task = progress.add_task("Simulation batches", total=batches)
-                for _ in range(batches):
-                    self._simulation_iterate(
-                        t_f,
-                        dt,
-                        save_dir,
-                        sim_name,
-                        progress=progress,
-                    )
-                    progress.advance(batch_task)
-
-    def compile(self) -> List[Node]:
-        """Topologically sort nodes to obtain an execution order.
-
-        Returns
-        -------
-        list of Node
-            Nodes in the order they should be executed.
-
-        Raises
-        ------
-        Exception
-            If the graph contains a cycle (algebraic loop).
-        """
-        dg = self._build_dependency_graph()
-        try:
-            topo_i = rwx.topological_sort(dg)
-        except rwx.DAGHasCycle:
-            mpl_draw(dg, with_labels=True, labels=lambda n: n.name)
-            raise Exception("Failed to compile graph. Topological cycle detected.")
-        return [dg[i] for i in reversed(topo_i)]
-
-    def _simulation_iterate(
         self,
         t_f: float,
-        dt: float,
-        save_dir: str,
-        sim_name: str,
-        progress: Optional[Progress] = None,
-    ):
-        """Run a single realization of the system.
+        dt: float | None = None,
+        *,
+        log_dir: str | Path | None = None,
+        save_dir: str | Path | None = None,
+        sim_name: str | None = None,
+        log_values: bool = True,
+        log_faults: bool = True,
+        enable_faults: bool | None = None,
+        batches: int = 1,
+    ) -> None:
+        previous_enable_faults = self.enable_faults
+        if enable_faults is not None:
+            self.enable_faults = bool(enable_faults)
+        try:
+            for batch in range(batches):
+                self._output_dir = self._resolve_output_dir(log_dir, save_dir, sim_name, batch, batches)
+                self._logger = (
+                    CsvSimulationLogger(self._output_dir, values=log_values, faults=log_faults)
+                    if log_dir is not None
+                    else None
+                )
+                self.initialize(dt)
+                while self._t < t_f - 1e-12:
+                    self._run_time(self._t)
+                    self._step_index += 1
+                    self._t = round(float(self._step_index * self._base_dt_fraction), 12)
+                self.finalize()
+        finally:
+            self.enable_faults = previous_enable_faults
 
-        Parameters
-        ----------
-        t_f : float
-            Final simulation time.
-        dt : float
-            Default simulation step.
-        save_dir : str
-            Output directory for artifacts.
-        sim_name : str
-            Simulation name for directory construction.
-        """
-        self._sim_start_time = datetime.now()
-        self._save_dir = save_dir
-        self._sim_name = sim_name
-        self._fault_history.clear()  # Reset fault history for new simulation
+    def compile(self) -> list[Node]:
+        dependencies = {node: tuple(node.depends()) for node in self._nodes}
+        unknown = {dep for deps in dependencies.values() for dep in deps if dep not in self._nodes}
+        if unknown:
+            names = ", ".join(dep.name or dep.__class__.__name__ for dep in unknown)
+            raise ValueError(f"Node dependencies are not registered in the system: {names}")
 
-        if self.get_output_dir() != None:
-            if not path.exists(self.get_output_dir()):
-                makedirs(self.get_output_dir())
+        graph = rwx.PyDAG()
+        node_indices = graph.add_nodes_from(self._nodes)
+        node_to_index = dict(zip(self._nodes, node_indices))
+        for node, deps in dependencies.items():
+            for dependency in deps:
+                graph.add_edge(node_to_index[dependency], node_to_index[node], None)
 
-        for n in self._nodes:
-            # If the nodes execution period is not set, then set it from the the default given in the call.
-            if n.period == None:
-                n.period = dt
+        try:
+            return [graph[index] for index in rwx.topological_sort(graph)]
+        except rwx.DAGHasCycle as exc:
+            raise RuntimeError("Failed to compile node graph; topological cycle detected") from exc
 
-        # Compile to get execution plan
-        self._ex_plan = self.compile()
-        self._schedule = self._build_schedule(t_f)
+    def samples(self) -> dict[str, PortSample]:
+        return {port.full_name: port.read() for node in self._nodes for port in node.iter_ports()}
 
-        # Initialize all blocks
-        for n in self._nodes:
-            n.initialize()
-        for f in self._faults:
-            f.initialize()
+    def parameter_values(self) -> dict[str, object]:
+        return {parameter.full_name: parameter.value for node in self._nodes for parameter in node.iter_parameters()}
 
-        schedule_task = None
-        if progress is not None:
-            schedule_task = progress.add_task(
-                f"Sim --- {sim_name}", total=len(self._schedule)
-            )
+    def _run_time(self, time: float) -> None:
+        self._evaluate_faults(time)
+        for node in self._ex_plan:
+            if self._node_due(node):
+                self._apply_faults(time, node, {"input", "parameter"})
+                node.update(time)
+                self._apply_faults(time, node, {"output"})
+        self._fault_history[time] = {fault.name: fault.active for fault in self._faults}
+        if self._logger is not None:
+            self._logger.log_values(time, self)
+            self._logger.log_faults(time, self._faults)
 
-        for st, ns in self._schedule.items():
-            # print(f"Processing time step {st}...")
-            # Update each fault
-            for f in self._faults:
-                f.update(st)
+    def _evaluate_faults(self, time: float) -> None:
+        for fault in self._faults:
+            context = FaultContext(self, fault, time, fault.targets)
+            fault.evaluate(context) if self.enable_faults else setattr(fault, "_active", False)
 
-            # Record fault status at this timestep
-            fault_status = {}
-            for f in self._faults:
-                fault_status[f.name] = f.triggered and f.active
-            self._fault_history[st] = fault_status
+    def _apply_faults(self, time: float, node: Node, kinds: set[str]) -> None:
+        if not self.enable_faults:
+            return
+        for fault in self._faults:
+            if not fault.active:
+                continue
+            targets = [target for target in fault.targets if _target_matches_node(target, node, kinds)]
+            if targets:
+                fault.mutate(FaultContext(self, fault, time, targets))
 
-            # Get all times and nodes to update at each time
-            for n in self._ex_plan:
-                if n in ns:
-                    # If the node should be updated at this time, update it.
-                    n.update(st)
+    def _node_due(self, node: Node) -> bool:
+        return self._step_index % self._period_steps[node] == 0
 
-            if schedule_task is not None:
-                progress.advance(schedule_task)
+    def _prepare_timing(self, dt: float | None) -> None:
+        default_period = 0.01 if dt is None else float(dt)
+        periods = []
+        for node in self._nodes:
+            if node.period is None:
+                node.period = default_period
+            periods.append(_fraction(node.period))
+        self._base_dt_fraction = _fraction_gcd(periods)
+        self._base_dt = float(self._base_dt_fraction)
+        self._period_steps = {node: int(_fraction(node.period) / self._base_dt_fraction) for node in self._nodes}
 
-        if schedule_task is not None:
-            progress.remove_task(schedule_task)
+    def _resolve_output_dir(self, log_dir, save_dir, sim_name, batch: int, batches: int) -> Path | None:
+        base = log_dir if log_dir is not None else save_dir
+        if base is None:
+            return None
+        path = Path(base)
+        if sim_name:
+            suffix = datetime.now().strftime("%Y%m%d-%H%M%S")
+            name = f"{sim_name}-{suffix}"
+            if batches > 1:
+                name = f"{name}-batch-{batch + 1}"
+            path = path / name
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
-        # Finalize all blocks with fault history
-        for n in self._nodes:
-            n.finalize(fault_history=self._fault_history)
+    @staticmethod
+    def _default_name(class_name: str, existing: set[str | None]) -> str:
+        index = 1
+        while f"{class_name}-{index}" in existing:
+            index += 1
+        return f"{class_name}-{index}"
 
-        self._detected_faults.clear()
 
-    def _build_dependency_graph(self) -> rwx.PyDAG:
-        """Build a dependency graph for the current nodes.
+def _target_matches_node(target, node: Node, kinds: set[str]) -> bool:
+    if "input" in kinds and isinstance(target, InputPort) and target.node is node:
+        return True
+    if "output" in kinds and isinstance(target, OutputPort) and target.node is node:
+        return True
+    return "parameter" in kinds and getattr(target, "node", None) is node and hasattr(target, "set")
 
-        Returns
-        -------
-        rustworkx.PyDAG
-            DAG with nodes corresponding to simulation nodes and edges pointing
-            from dependents to dependencies.
-        """
-        dg = rwx.PyDAG()
-        ndinx = dg.add_nodes_from(self._nodes)
-        for ni in ndinx:
-            n = self._nodes[ni]
-            for p in n.depends():
-                pi = self._nodes.index(p)
-                dg.add_edge(ni, pi, None)
-        return dg
 
-    def _build_schedule(self, tf: float) -> Dict[float, List[Node]]:
-        """Construct the simulation schedule.
+def _fraction(value: float) -> Fraction:
+    return Fraction(str(float(value))).limit_denominator(1_000_000)
 
-        Parameters
-        ----------
-        tf : float
-            Final time (exclusive).
 
-        Returns
-        -------
-        dict
-            Mapping time step to list of nodes scheduled for update.
-        """
-        sched = {}
-        for n in self._nodes:
-            for t in np.arange(0, tf, n.period):
-                if t in sched.keys():
-                    sched[t] += [n]
-                else:
-                    sched[t] = [n]
-        return dict(sorted(sched.items()))
-
-    def _initialize_faults(self):
-        """Generate initial realizations of faults."""
-        for fault_list in self._faults.values():
-            for f in fault_list:
-                f._gen_state()
-
-    def _create_progress(self) -> Progress:
-        return Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            TimeRemainingColumn(),
-            console=Console(stderr=True),
-            transient=True,
-        )
+def _fraction_gcd(values: Iterable[Fraction]) -> Fraction:
+    values = tuple(values)
+    numerator_gcd = values[0].numerator
+    denominator_lcm = values[0].denominator
+    for value in values[1:]:
+        numerator_gcd = gcd(numerator_gcd, value.numerator)
+        denominator_lcm = lcm(denominator_lcm, value.denominator)
+    return Fraction(numerator_gcd, denominator_lcm)

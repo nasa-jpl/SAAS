@@ -1,96 +1,170 @@
-"""Test fault injection mechanisms in syssim."""
+"""Test context-aware fault injection mechanisms in syssim."""
+from dataclasses import dataclass
+
 import numpy as np
+import pytest
 
-from syssim.core import NodeSystem
-from syssim.nodes.dynamics import NodeStateSpace
+from syssim.core import EmptySpec, Fault, FaultContext, InputPort, Node, NodeParameter, NodeSystem, OutputPort, input_port, output_port, parameter
 from syssim.nodes.source import NodeConstant
-from syssim.fault.basic_fault import FaultBasic
-from syssim.fault.disconect import DisconnectFault, ZeroFault
+from syssim.fault.basic_fault import FaultBasic, FaultBasicConfig
+from syssim.fault.disconnect import DisconnectFault, ZeroFault
 
 
-def test_zero_fault_produces_zero():
-    """Verify ZeroFault returns zero values after trigger time."""
-    dt = 0.01
-    node_step = NodeConstant(np.array([1.0]), name="step-source")
-    node_lti = NodeStateSpace(
-        a=np.array([[-1.0]]),
-        b=np.array([[1.0]]),
-        c=np.array([[1.0]]),
-        x0=np.array([0.0]),
-        sample_period=dt,
-        name="state-space-filter",
+@dataclass
+class RecorderInputs:
+    inp: InputPort[np.ndarray] = input_port(np.ndarray)
+
+
+class Recorder(Node[RecorderInputs, EmptySpec, EmptySpec, EmptySpec]):
+    Inputs = RecorderInputs
+
+    def __init__(self, **kwargs):
+        self.times = []
+        self.values = []
+        super().__init__(**kwargs)
+
+    def update(self, sim_time: float):
+        sample = self.i.inp.read()
+        self.times.append(sim_time)
+        self.values.append(sample.value.copy())
+
+
+@dataclass
+class GainInputs:
+    u: InputPort[float] = input_port(float)
+
+
+@dataclass
+class GainOutputs:
+    y: OutputPort[float] = output_port(float)
+
+
+@dataclass
+class GainParameters:
+    gain: NodeParameter[float] = parameter(2.0, value_type=float)
+
+
+class Gain(Node[GainInputs, GainOutputs, GainParameters, EmptySpec]):
+    Inputs = GainInputs
+    Outputs = GainOutputs
+    Parameters = GainParameters
+
+    def update(self, sim_time: float):
+        self.o.y.write(self.i.u.read().value * self.p.gain.value, sim_time)
+
+
+def test_zero_fault_mutates_registered_output_target():
+    source = NodeConstant(np.array([1.0]), sample_period=0.1, name="source")
+    recorder = Recorder(sample_period=0.1, name="recorder")
+    source.o.constant_out >> recorder.i.inp
+    fault = ZeroFault(name="zero-source", trigger_time=0.2, targets=[source.o.constant_out])
+    system = NodeSystem()
+    system.add_node(source)
+    system.add_node(recorder)
+    system.add_faults(fault)
+
+    system.simulate(t_f=0.4, dt=0.1)
+
+    values = np.array([item[0] for item in recorder.values])
+    assert np.all(values[np.array(recorder.times) < 0.2] == 1.0)
+    assert np.all(values[np.array(recorder.times) >= 0.2] == 0.0)
+
+
+def test_disconnect_fault_mutates_to_nan():
+    source = NodeConstant(np.array([1.0]), sample_period=0.1, name="source")
+    recorder = Recorder(sample_period=0.1, name="recorder")
+    source.o.constant_out >> recorder.i.inp
+    fault = DisconnectFault(name="disconnect-source", trigger_time=0.0, targets=[source.o.constant_out])
+    system = NodeSystem()
+    system.add_node(source)
+    system.add_node(recorder)
+    system.add_faults(fault)
+
+    system.step(0.1)
+
+    assert np.isnan(recorder.values[-1][0])
+
+
+def test_parameter_fault_applies_before_node_update():
+    source = NodeConstant(3.0, sample_period=0.1, name="source")
+    gain = Gain(sample_period=0.1, name="gain")
+    source.o.constant_out >> gain.i.u
+    fault = ZeroFault(name="zero-gain", trigger_time=0.0, targets=[gain.p.gain])
+    system = NodeSystem()
+    system.add_node(source)
+    system.add_node(gain)
+    system.add_faults(fault)
+
+    samples = system.step(0.1)
+
+    assert samples["gain.y"].value == 0.0
+
+
+class BadFault(Fault):
+    def __init__(self, illegal_target, **kwargs):
+        self.illegal_target = illegal_target
+        super().__init__(**kwargs)
+
+    def trigger(self, context: FaultContext) -> bool:
+        return True
+
+    def mutate(self, context: FaultContext) -> None:
+        context.write(self.illegal_target, np.array([0.0]))
+
+
+def test_fault_write_access_is_limited_to_registered_targets():
+    source = NodeConstant(np.array([1.0]), sample_period=0.1, name="source")
+    recorder = Recorder(sample_period=0.1, name="recorder")
+    source.o.constant_out >> recorder.i.inp
+    fault = BadFault(recorder.i.inp, name="bad", targets=[source.o.constant_out])
+    system = NodeSystem()
+    system.add_node(source)
+    system.add_node(recorder)
+    system.add_faults(fault)
+
+    with pytest.raises(PermissionError):
+        system.step(0.1)
+
+
+def test_basic_fault_duration_and_hold_action():
+    source = NodeConstant(np.array([1.0]), sample_period=0.1, name="source")
+    recorder = Recorder(sample_period=0.1, name="recorder")
+    source.o.constant_out >> recorder.i.inp
+    config = FaultBasicConfig(
+        name="basic-zero",
+        start_time=0.1,
+        duration=0.2,
+        occurrence=1.0,
+        action="hold",
+        index=0,
+        value=0.0,
     )
-    
-    sys = NodeSystem()
-    sys.add_node(node_step)
-    sys.add_node(node_lti)
-    node_step.o.constant_out >> node_lti.i.u
-    
-    # Add zero fault at t=3.0
-    fault = ZeroFault(name="zero-input", trigger_time=3.0)
-    node_step.o.constant_out.add_fault(fault)
-    sys.add_faults(fault)
-    
-    # Capture input values
-    u_sim = []
-    t_sim = []
-    
-    original_lti_update = node_lti.update
-    def capture_update(sim_time):
-        t_sim.append(sim_time)
-        u_val = node_lti.i.u.read()
-        u_sim.append(u_val[0] if u_val is not None else np.nan)
-        original_lti_update(sim_time)
-    
-    node_lti.update = capture_update
-    
-    sys.simulate(t_f=5.0, dt=dt)
-    
-    t_array = np.array(t_sim)
-    u_array = np.array(u_sim)
-    
-    # Check values before and after zero fault
-    before_zero = u_array[t_array < 3.0]
-    after_zero = u_array[t_array >= 3.0]
-    
-    # Before fault, should be ~1.0
-    assert np.all(np.abs(before_zero - 1.0) < 0.1), \
-        "Input not nominal before zero fault"
-    
-    # After fault, should be 0.0
-    assert np.all(np.abs(after_zero) < 0.01), \
-        "Expected zero values after zero fault"
+    fault = FaultBasic(config, port=source.o.constant_out)
+    system = NodeSystem()
+    system.add_node(source)
+    system.add_node(recorder)
+    system.add_faults(fault)
+
+    system.simulate(t_f=0.4, dt=0.1)
+
+    by_time = {round(time, 1): value[0] for time, value in zip(recorder.times, recorder.values)}
+    assert by_time[0.0] == 1.0
+    assert by_time[0.1] == 0.0
+    assert by_time[0.2] == 0.0
+    assert by_time[0.3] == 1.0
 
 
 def test_fault_history_tracking():
     """Verify that fault activation status is properly recorded over time."""
-    dt = 0.1
-    node_step = NodeConstant(np.array([1.0]), name="step-source")
-    
-    sys = NodeSystem()
-    sys.add_node(node_step)
-    
-    # Add a fault that triggers at t=2.0
-    fault = ZeroFault(name="test-fault", trigger_time=2.0)
-    node_step.o.constant_out.add_fault(fault)
-    sys.add_faults(fault)
-    
-    sys.simulate(t_f=5.0, dt=dt)
-    
-    # Get fault history
-    history = sys.get_fault_history()
-    
-    # Check that history contains entries
-    assert len(history) > 0, "Fault history should not be empty"
-    
-    # Check that fault is inactive before trigger time
-    times_before = [t for t in history.keys() if t < 2.0]
-    for t in times_before:
-        assert history[t]["test-fault"] == False, \
-            f"Fault should be inactive at t={t}"
-    
-    # Check that fault is active at/after trigger time
-    times_after = [t for t in history.keys() if t >= 2.0]
-    for t in times_after:
-        assert history[t]["test-fault"] == True, \
-            f"Fault should be active at t={t}"
+    source = NodeConstant(np.array([1.0]), sample_period=0.1, name="source")
+    fault = ZeroFault(name="test-fault", trigger_time=0.2, targets=[source.o.constant_out])
+    system = NodeSystem()
+    system.add_node(source)
+    system.add_faults(fault)
+
+    system.simulate(t_f=0.5, dt=0.1)
+
+    history = system.get_fault_history()
+    assert history
+    assert all(not status["test-fault"] for time, status in history.items() if time < 0.2)
+    assert all(status["test-fault"] for time, status in history.items() if time >= 0.2)

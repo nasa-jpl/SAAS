@@ -1,45 +1,42 @@
 #! python
+from dataclasses import dataclass
+
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import NamedTuple
 
-from syssim.core import Node, NodeSystem, InputPort, OutputPort
+from syssim.core import EmptySpec, InputPort, Node, NodeSystem, OutputPort, input_port, output_port
 from syssim.nodes.dynamics import NodeStateSpace
 
 
-class NodeSinSourceOutputs(NamedTuple):
-    y: OutputPort
+@dataclass
+class NodeSinSourceOutputs:
+    y: OutputPort[np.ndarray] = output_port(np.ndarray)
 
 
-class NodeSinSource(Node):
+class NodeSinSource(Node[EmptySpec, NodeSinSourceOutputs, EmptySpec, EmptySpec]):
+    Outputs = NodeSinSourceOutputs
+
     def __init__(self, omega: float = 1.0, amplitude: float = 1.0, **kwargs):
         self._omega = omega
         self._amp = amplitude
-        self._o = NodeSinSourceOutputs(OutputPort("output_y", self))
-        super().__init__((), self._o, **kwargs)
+        super().__init__(**kwargs)
 
     def update(self, sim_time: float):
         y = np.array([self._amp * np.sin(self._omega * sim_time)])
-        self._o.y.shift_out(y, sim_time)
-
-    @property
-    def o(self):
-        return self._o
+        self.o.y.write(y, sim_time)
 
 
-class IntegratorScopeInputs(NamedTuple):
-    y1: InputPort
-    y2: InputPort
-    y3: InputPort
+@dataclass
+class IntegratorScopeInputs:
+    y1: InputPort[np.ndarray] = input_port(np.ndarray)
+    y2: InputPort[np.ndarray] = input_port(np.ndarray)
+    y3: InputPort[np.ndarray] = input_port(np.ndarray)
 
 
-class IntegratorScope(Node):
+class IntegratorScope(Node[IntegratorScopeInputs, EmptySpec, EmptySpec, EmptySpec]):
+    Inputs = IntegratorScopeInputs
+
     def __init__(self, **kwargs):
-        self._i = IntegratorScopeInputs(
-            InputPort("input_y1", self),
-            InputPort("input_y2", self),
-            InputPort("input_y3", self),
-        )
         self._t = []
         self._y1 = []
         self._y2 = []
@@ -47,12 +44,12 @@ class IntegratorScope(Node):
         self._age_1 = []
         self._age_2 = []
         self._age_3 = []
-        super().__init__(self._i, (), **kwargs)
+        super().__init__(**kwargs)
 
     def update(self, sim_time: float):
-        y1, t1 = self._i.y1.read_with_time()
-        y2, t2 = self._i.y2.read_with_time()
-        y3, t3 = self._i.y3.read_with_time()
+        y1, t1 = self.i.y1.read()
+        y2, t2 = self.i.y2.read()
+        y3, t3 = self.i.y3.read()
 
         self._t.append(sim_time)
         self._y1.append(float(y1[0]))
@@ -83,10 +80,6 @@ class IntegratorScope(Node):
 
         plt.tight_layout()
         plt.show()
-
-    @property
-    def i(self):
-        return self._i
 
 
 def make_integrator(name: str, sample_period: float):

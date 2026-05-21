@@ -1,10 +1,31 @@
 """Test syssim step response against scipy reference implementation."""
+from dataclasses import dataclass
+
 import numpy as np
 from scipy import signal
 
-from syssim.core import NodeSystem
+from syssim.core import EmptySpec, InputPort, Node, NodeSystem, input_port
 from syssim.nodes.dynamics import NodeStateSpace
 from syssim.nodes.source import NodeConstant
+
+
+@dataclass
+class RecorderInputs:
+    inp: InputPort[np.ndarray] = input_port(np.ndarray)
+
+
+class Recorder(Node[RecorderInputs, EmptySpec, EmptySpec, EmptySpec]):
+    Inputs = RecorderInputs
+
+    def __init__(self, **kwargs):
+        self.times = []
+        self.values = []
+        super().__init__(**kwargs)
+
+    def update(self, sim_time: float):
+        sample = self.i.inp.read()
+        self.times.append(sim_time)
+        self.values.append(sample.value.copy())
 
 
 def test_step_response_matches_scipy():
@@ -29,33 +50,21 @@ def test_step_response_matches_scipy():
         sample_period=dt,
         name="state-space-filter",
     )
+    recorder = Recorder(sample_period=dt, name="recorder")
     
     sys = NodeSystem()
     sys.add_node(node_step)
     sys.add_node(node_lti)
+    sys.add_node(recorder)
     node_step.o.constant_out >> node_lti.i.u
-    
-    # Capture output manually instead of using scope
-    t_sim = []
-    y_sim = []
-    
-    # Override node_lti.update to record outputs
-    original_update = node_lti.update
-    def capture_update(sim_time):
-        original_update(sim_time)
-        t_sim.append(sim_time)
-        # Read from the output port's last shift_out value
-        # We need to access the state directly
-        y_sim.append(node_lti._x[0])
-    
-    node_lti.update = capture_update
+    node_lti.o.y >> recorder.i.inp
     
     # Simulate
     sys.simulate(t_f=10.0, dt=dt)
     
     # Interpolate scipy result to match syssim time points
-    y_ref_interp = np.interp(t_sim, t_ref, y_ref.flatten())
-    y_sim_array = np.array(y_sim)
+    y_ref_interp = np.interp(recorder.times, t_ref, y_ref.flatten())
+    y_sim_array = np.array([item[0] for item in recorder.values])
     
     # Allow small numerical differences due to integration method
     np.testing.assert_allclose(
@@ -83,30 +92,20 @@ def test_step_response_without_fault_reaches_steady_state():
         sample_period=dt,
         name="state-space-filter",
     )
+    recorder = Recorder(sample_period=dt, name="recorder")
     
     sys = NodeSystem()
     sys.add_node(node_step)
     sys.add_node(node_lti)
+    sys.add_node(recorder)
     node_step.o.constant_out >> node_lti.i.u
-
-    # Capture output manually instead of using scope
-    y_sim = []
-    
-    # Override node_lti.update to record outputs
-    original_update = node_lti.update
-    def capture_update(sim_time):
-        original_update(sim_time)
-        # Read from the output port's last shift_out value
-        # We need to access the state directly
-        y_sim.append(node_lti._x[0])
-    
-    node_lti.update = capture_update
+    node_lti.o.y >> recorder.i.inp
     
     # Capture final state
     sys.simulate(t_f=10.0, dt=dt)
     
     # After 10 seconds (10 time constants), should be very close to 1.0
-    final_state = y_sim[-1]
+    final_state = recorder.values[-1][0]
 
     np.testing.assert_allclose(
         final_state,

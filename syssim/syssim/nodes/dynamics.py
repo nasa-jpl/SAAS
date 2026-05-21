@@ -1,25 +1,44 @@
-from typing import NamedTuple, Union
+from dataclasses import dataclass
 
 import numpy as np
 from scipy.integrate import solve_ivp
 
-from syssim.core import NodeDifferential
-from syssim.core import InputPort, OutputPort
+from syssim.core import EmptySpec, InputPort, NodeDifferential, NodeParameter, OutputPort, input_port, output_port, parameter
 
 
-class NodeStateSpaceInputs(NamedTuple):
+@dataclass
+class NodeStateSpaceInputs:
+    u: InputPort[np.ndarray] = input_port(np.ndarray)
+    """Input port for the state-space node. Expects a 1D array of shape (m,)."""
 
-    u: InputPort
-    """Input vector for the SS system"""
+@dataclass
+class NodeStateSpaceOutputs:
+    y: OutputPort[np.ndarray] = output_port(np.ndarray)
+    """Output port for the state-space node. Expects a 1D array of shape (p,)."""
 
 
-class NodeStateSpaceOutputs(NamedTuple):
+@dataclass
+class NodeStateSpaceParameters:
+    a: NodeParameter[np.ndarray] = parameter(default_factory=lambda: np.empty((0, 0)), value_type=np.ndarray)
+    """State transition matrix of shape (n, n)."""
+    b: NodeParameter[np.ndarray] = parameter(default_factory=lambda: np.empty((0, 0)), value_type=np.ndarray)
+    """Input matrix of shape (n, m)."""
+    c: NodeParameter[np.ndarray] = parameter(default_factory=lambda: np.empty((0, 0)), value_type=np.ndarray)
+    """Output matrix of shape (p, n)."""
 
-    y: OutputPort
-    """Output vector for the SS system"""
 
-
-class NodeStateSpace(NodeDifferential):
+class NodeStateSpace(
+    NodeDifferential[
+        np.ndarray,
+        NodeStateSpaceInputs,
+        NodeStateSpaceOutputs,
+        NodeStateSpaceParameters,
+        EmptySpec,
+    ]
+):
+    Inputs = NodeStateSpaceInputs
+    Outputs = NodeStateSpaceOutputs
+    Parameters = NodeStateSpaceParameters
 
     def __init__(self, a: np.ndarray, b: np.ndarray, c: np.ndarray, x0: np.ndarray, **kwargs):
         """Linear time-invariant state-space node without feedthrough.
@@ -40,43 +59,39 @@ class NodeStateSpace(NodeDifferential):
         ``D`` is omitted because :class:`NodeDifferential` forbids dependence
         on the current-time input during output computation.
         """
-        self._a = a
-        self._b = b
-        self._c = c
-
-        self._i = NodeStateSpaceInputs(InputPort("input_u", self))
-        self._o = NodeStateSpaceOutputs(OutputPort("output_y", self))
-
-        super().__init__(x0, self._i, self._o, **kwargs)
+        super().__init__(np.asarray(x0, dtype=float), **kwargs)
+        self.p.a.set_nominal(np.asarray(a, dtype=float))
+        self.p.b.set_nominal(np.asarray(b, dtype=float))
+        self.p.c.set_nominal(np.asarray(c, dtype=float))
+        self.p.a.set_contract(value_type=np.ndarray, dtype=float, shape=self.p.a.value.shape)
+        self.p.b.set_contract(value_type=np.ndarray, dtype=float, shape=self.p.b.value.shape)
+        self.p.c.set_contract(value_type=np.ndarray, dtype=float, shape=self.p.c.value.shape)
+        self.i.u.set_contract(value_type=np.ndarray, dtype=float, shape=(self.p.b.value.shape[1],))
+        self.o.y.set_contract(value_type=np.ndarray, dtype=float, shape=(self.p.c.value.shape[0],))
 
     def initialize(self):
-        self._t = 0
+        self._t = 0.0
+        self.reset_state()
 
     def update(self, sim_time: float):
-        u = self._i.u.read()
+        u = self.i.u.read().value
+        if u is None:
+            u = np.zeros(self.p.b.value.shape[1], dtype=float)
+        u = np.asarray(u, dtype=float)
         def integrand(t, x): return self._dynamics(x, u)
 
-        sol = solve_ivp(integrand, (self._t, sim_time), self._x)
+        if sim_time > self._t:
+            sol = solve_ivp(integrand, (self._t, sim_time), self.state)
+            self.state = sol.y[:, -1]
+
+        y = self._output(self.state, u)
+
+        self.o.y.write(y, sim_time)
 
         self._t = sim_time
-        self._x = sol.y[:, -1]
-
-        y = self._output(self._x, u)
-
-        self._o.y.shift_out(y, sim_time)
-
-        self._t = sim_time
-
-    @property
-    def i(self):
-        return self._i
-    
-    @property
-    def o(self):
-        return self._o
 
     def _dynamics(self, x, u):
-        return self._a @ x + self._b @ u
+        return self.p.a.value @ x + self.p.b.value @ u
 
     def _output(self, x: np.ndarray, u: np.ndarray):
-        return self._c @ x
+        return self.p.c.value @ x

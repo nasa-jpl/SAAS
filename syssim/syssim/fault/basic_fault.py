@@ -1,77 +1,67 @@
-from typing import Dict, Union
+from dataclasses import dataclass
+from typing import Any, Callable, Iterable, Sequence
+
 import numpy as np
-from syssim.core import Node, InputPort, OutputPort
+from syssim.core import Fault, FaultContext, InputPort, OutputPort
 
 
-class FaultBasic:
-    def __init__(self, spec: Dict, node: Node, port: Union[InputPort, OutputPort]):
-        """Fault defined from TOML-style specification.
+@dataclass
+class FaultBasicConfig:
+    """Configuration for :class:`FaultBasic`.
 
-        Parameters
-        ----------
-        spec : dict
-            Parsed fault specification. See README for field schema.
-        node : Node
-            Node owning the port to fault.
-        port : InputPort or OutputPort
-            Port that will be mutated while the fault is active.
+    ``start_time_distribution``, ``duration_distribution``, and
+    ``value_distribution`` are optional zero-argument callables for stochastic
+    runs. Fixed defaults keep the common deterministic case small.
+    """
 
-        Notes
-        -----
-        Fault parameters (start time, duration, occurrence, action type, and
-        indices) support both fixed values and random draws per simulation
-        batch.
-        """
-        self._spec = spec
-        self._node = node
+    name: str | None = None
+    start_time: float = 0.0
+    duration: float = float("inf")
+    occurrence: float = 1.0
+    action: str = "hold"
+    value: Any = 0.0
+    index: int | Sequence[int] | slice = 0
+    start_time_distribution: Callable[[], float] | None = None
+    duration_distribution: Callable[[], float] | None = None
+    value_distribution: Callable[[], Any] | None = None
+
+
+class FaultBasic(Fault):
+    Config = FaultBasicConfig
+
+    def __init__(
+        self,
+        config: FaultBasicConfig | None = None,
+        port: InputPort | OutputPort | None = None,
+        targets: Iterable[object] | None = None,
+        *,
+        enabled: bool = True,
+    ):
+        """Create a basic index/value fault from a dataclass config."""
+        self.config = config or FaultBasicConfig()
+        if not isinstance(self.config, FaultBasicConfig):
+            raise TypeError("FaultBasic config must be a FaultBasicConfig dataclass instance or None")
+        all_targets = list(targets or [])
+        if port is not None:
+            all_targets.append(port)
+        super().__init__(name=self.config.name, targets=all_targets, enabled=enabled)
         self._port = port
-        self._setup_parameters()
-        self._is_active = False
-        port.add_fault(self)
         self._state = (None, None, None)
-        self._name = self._spec["name"]
 
     def __repr__(self) -> str:
         if self._state[2] == True:
-            return f"Basic Fault [{self._name}]:\n\tNode = {self._node.name}\n\tPort = {self._port.name}\n\tStart time = {self._state[0]}\n\tDuration = {self._state[1]}"
+            return f"Basic Fault [{self.name}]: start={self._state[0]}, duration={self._state[1]}"
         else:
-            return f"Basic Fault [{self._name}]:\n\tNode = {self._node.name}\n\tPort = {self._port.name}\n\tDoes not occur"
+            return f"Basic Fault [{self.name}]: does not occur"
 
-    def _setup_parameters(self):
-        """Setup the parameters of the class given its spec."""
-        if "t" in self._spec["start-time"].keys():
-            self._t = lambda: self._spec["start-time"]["t"]
-        elif "gaussian" in self._spec["start-time"].keys():
-            self._t = lambda: np.random.normal(
-                self._spec["start-time"]["gaussian"]["mean"],
-                self._spec["start-time"]["gaussian"]["dev"],
-            )
-        else:
-            raise Exception()
-
-        if "dt" in self._spec["duration"].keys():
-            self._dt = lambda: self._spec["duration"]["dt"]
-        elif "gaussian" in self._spec["duration"].keys():
-            self._dt = lambda: np.random.normal(
-                self._spec["duration"]["gaussian"]["mean"],
-                self._spec["duration"]["gaussian"]["dev"],
-            )
-        else:
-            raise Exception()
-
-        try:
-            self._occurance = self._spec["occurance"]["p"]
-        except KeyError:
-            raise Exception(
-                "Must provide occurance probability for fault between 0.0 and 1.0."
-            )
-        self._p = lambda: np.random.choice(
-            [True, False], p=[self._occurance, 1 - self._occurance]
-        )
-
-    def _gen_state(self):
+    def initialize(self):
+        super().initialize()
         """Generate fault realization for the current batch."""
-        self._state = (self._t(), self._dt(), self._p())
+        self._state = (
+            _draw(self.config.start_time, self.config.start_time_distribution),
+            _draw(self.config.duration, self.config.duration_distribution),
+            np.random.choice([True, False], p=[self.config.occurrence, 1 - self.config.occurrence]),
+        )
 
     def start_time(self) -> float:
         """Start time for this realization."""
@@ -85,69 +75,33 @@ class FaultBasic:
         """Whether the fault occurs in the current realization."""
         return self._state[2]
 
-    def is_active(self) -> bool:
-        """Whether the fault is active at the current simulation time."""
-        return self._is_active
-
-    @property
-    def active(self) -> bool:
-        """Compatibility property used by port fault application."""
-        return self._is_active
-
     def get_name(self) -> str:
         """Return the fault name."""
-        return self._name
+        return self.name
 
-    def update(self, sim_time: float):
-        """Update activation state based on simulation time."""
-        if sim_time >= self.start_time() and sim_time < (
-            self.start_time() + self.duration()
-        ):
-            if self.is_occuring():
-                self._is_active = True
-        else:
-            self._is_active = False
+    def trigger(self, context: FaultContext) -> bool:
+        if self._state[0] is None:
+            self.initialize()
+        start = self.start_time()
+        end = start + self.duration()
+        return bool(self.is_occuring() and start <= context.time and context.time < end - 1e-12)
 
-    def action(self, v: np.ndarray, timestamp: float = None):
-        """Apply the configured mutation to the provided value."""
-        action_type = self._spec["action"]["type"]
+    def mutate(self, context: FaultContext) -> None:
+        for target in context.targets:
+            sample = context.read(target)
+            context.write(target, self._mutate_value(sample.value), sample_time=sample.time)
 
-        if (
-            isinstance(self._spec["action"]["index"], dict)
-            and "start" in self._spec["action"]["index"]
-            and "end" in self._spec["action"]["index"]
-        ):
-            index = np.arange(
-                self._spec["action"]["index"]["start"],
-                self._spec["action"]["index"]["stop"],
-            )
-        elif isinstance(self._spec["action"]["index"], list):
-            index = self._spec["action"]["index"]
-        else:
-            index = [self._spec["action"]["index"]]
+    def _mutate_value(self, value: Any):
+        v = np.array(value, copy=True) if isinstance(value, np.ndarray) else value
+        action_type = self.config.action
+        index = _indices(self.config.index)
         if action_type == "random":
-            if "gaussian" in self._spec["action"]["value"].keys():
-                mu = self._spec["action"]["value"]["gaussian"]["mean"]
-                sig = self._spec["action"]["value"]["gaussian"]["dev"]
-
-                dist = lambda: np.random.normal(mu, sig)
-
-            elif "uniform" in self._spec["action"]["value"].keys():
-                low = self._spec["action"]["value"]["gaussian"]["low"]
-                high = self._spec["action"]["value"]["gaussian"]["high"]
-
-                dist = lambda: np.random.uniform(low, high)
-
-            else:
-                raise Exception(
-                    "action.value.gaussian or action.value.uniform must exist."
-                )
             for i in index:
-                v[i] = dist()
+                v[i] = _draw(self.config.value, self.config.value_distribution)
 
         elif action_type == "hold":
-            if isinstance(self._spec["action"]["value"], list):
-                vals = self._spec["action"]["value"]
+            if isinstance(self.config.value, list):
+                vals = self.config.value
                 if len(vals) != len(index):
                     raise Exception(
                         "For hold, must provide only one value or list of values the same length as index."
@@ -156,11 +110,27 @@ class FaultBasic:
                     v[i] = val
             else:
                 for i in index:
-                    v[i] = self._spec["action"]["value"]
+                    v[i] = self.config.value
         elif action_type == "disconnect":
             for i in index:
                 v[i] = np.nan
         else:
             raise Exception(f"Action type of {action_type} not known.")
 
-        return v, timestamp
+        return v
+
+
+def _draw(default: Any, distribution: Callable[[], Any] | None):
+    return distribution() if distribution is not None else default
+
+
+def _indices(index: int | Sequence[int] | slice) -> list[int]:
+    if isinstance(index, slice):
+        start = 0 if index.start is None else index.start
+        if index.stop is None:
+            raise ValueError("FaultBasic slice indices must define stop")
+        step = 1 if index.step is None else index.step
+        return list(range(start, index.stop, step))
+    if isinstance(index, int):
+        return [index]
+    return list(index)

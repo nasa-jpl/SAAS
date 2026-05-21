@@ -7,14 +7,12 @@ authors = [
 ]
 dependencies = [
     "matplotlib",
+    "numpy",
     "rustworkx",
-    "toml",
-    "rich",
-    "numpy"
+    "scipy"
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest>=7.0",
-    "scipy"
 ]

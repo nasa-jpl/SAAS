@@ -1,310 +1,405 @@
-from typing import Any, Union, Dict, List, Tuple, NamedTuple
-from copy import deepcopy
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from copy import deepcopy
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass
+from typing import Any, ClassVar, Generic, Mapping, TypeVar, cast
 
-import toml
-from numpy import array
+from syssim.core.port import InputPort, OutputPort, PortSample, validate_value
 
-from syssim.core.fault import Fault
-from syssim.core.port import InputPort, OutputPort
-
-
-class NodeParameter:
-    """Node parameters are used to store values for a node which represent nominally parametric values of the model which the node implements. However, these parameters may be faulted and thus may be overridden by the fault logic in a similar way to ports."""
-
-    def __init__(self, name: str, value: Any):
-        """Create a parameter that can be faulted.
-
-        Parameters
-        ----------
-        name : str
-            Parameter name.
-        value : Any
-            Stored value prior to any fault mutation.
-        """
-        self._name = name
-        self._value = value
-        self._faults: List[Fault] = []
-
-    def add_fault(self, fault):
-        """Attach a fault to this parameter.
-
-        Parameters
-        ----------
-        fault : Fault
-            Fault to evaluate whenever the parameter is read.
-        """
-        self._faults.append(fault)
-
-    # getter and setters
-    @property
-    def value(self) -> Any:
-        """Return the parameter value after active faults are applied.
-
-        Returns
-        -------
-        Any
-            Possibly fault-mutated value.
-        """
-        cval = deepcopy(self._value)
-        for f in self._faults:
-            if f.active:
-                try:
-                    cres = f.action(cval, None)
-                except TypeError:
-                    cres = f.action(cval)
-
-                if isinstance(cres, tuple) and len(cres) == 2:
-                    cval, _ = cres
-                else:
-                    cval = cres
-        return cval
-
-    @property
-    def name(self) -> str:
-        """Name of the parameter."""
-        return self._name
-
-    @name.setter
-    def name(self, name: str):
-        """Set the parameter name."""
-        if not isinstance(name, str):
-            raise TypeError("Parameter name must be a string")
-        self._name = name
+StateT = TypeVar("StateT")
+ParamT = TypeVar("ParamT")
+InputSpecT = TypeVar("InputSpecT")
+OutputSpecT = TypeVar("OutputSpecT")
+ParameterSpecT = TypeVar("ParameterSpecT")
+ConfigSpecT = TypeVar("ConfigSpecT")
 
 
-class Node(ABC):
-    """Abstract base class for simulation nodes.
+@dataclass
+class EmptySpec:
+    pass
 
-    Nodes own ports, optional parameters, and implement simulation lifecycle
-    hooks. Subclasses define behavior in :meth:`initialize`, :meth:`update`,
-    and :meth:`finalize`.
-    """
+
+def input_port(
+    value_type: Any = Any,
+    *,
+    name: str | None = None,
+    dtype: Any = None,
+    shape: tuple[int | None, ...] | None = None,
+):
+    return field(
+        init=False,
+        metadata={
+            "syssim_kind": "input",
+            "name": name,
+            "value_type": value_type,
+            "dtype": dtype,
+            "shape": shape,
+        },
+    )
+
+
+def output_port(
+    value_type: Any = Any,
+    *,
+    name: str | None = None,
+    dtype: Any = None,
+    shape: tuple[int | None, ...] | None = None,
+):
+    return field(
+        init=False,
+        metadata={
+            "syssim_kind": "output",
+            "name": name,
+            "value_type": value_type,
+            "dtype": dtype,
+            "shape": shape,
+        },
+    )
+
+
+def parameter(
+    default: Any = MISSING,
+    *,
+    default_factory: Any = MISSING,
+    value_type: Any = Any,
+    name: str | None = None,
+    dtype: Any = None,
+    shape: tuple[int | None, ...] | None = None,
+):
+    if default is not MISSING and default_factory is not MISSING:
+        raise ValueError("parameter cannot define both default and default_factory")
+    return field(
+        init=False,
+        metadata={
+            "syssim_kind": "parameter",
+            "name": name,
+            "default": default,
+            "default_factory": default_factory,
+            "value_type": value_type,
+            "dtype": dtype,
+            "shape": shape,
+        },
+    )
+
+
+class NodeParameter(Generic[ParamT]):
+    """Faultable, typed model coefficient owned by a node."""
 
     def __init__(
         self,
-        input_ports: Union[NamedTuple, Tuple],
-        output_ports: Union[NamedTuple, Tuple],
-        parameters: Union[NamedTuple, Tuple] = (),
-        config: str = None,
-        sample_frequency=None,
-        sample_period=None,
-        name: str = None,
+        name: str,
+        value: ParamT,
+        node: "Node[Any, Any, Any, Any]",
+        *,
+        attr_name: str | None = None,
+        value_type: Any = Any,
+        dtype: Any = None,
+        shape: tuple[int | None, ...] | None = None,
+        strict: bool = False,
     ):
-        """Construct a node.
-
-        Parameters
-        ----------
-        input_ports : NamedTuple or tuple
-            Input ports owned by the node.
-        output_ports : NamedTuple or tuple
-            Output ports owned by the node.
-        parameters : NamedTuple or tuple, optional
-            Node parameters that can also be faulted.
-        config : str, optional
-            Path to a TOML file with per-node configuration keyed by node name.
-        sample_frequency : float, optional
-            Update frequency in Hz; overrides ``sample_period`` when provided.
-        sample_period : float, optional
-            Update period in seconds.
-        name : str, optional
-            Node name, also used to pull configuration from the TOML file.
-        """
-
-        self._i = input_ports
-        self._o = output_ports
-        self._p = parameters
-
-        if config != None:
-            self._full_config = toml.load(config)
-        else:
-            self._full_config = {}
-
-        if sample_frequency != None:
-            self._period = 1 / sample_frequency
-        elif sample_period != None:
-            self._period = sample_period
-        else:
-            self._period = None
-
         self._name = name
+        self._attr_name = attr_name or name
+        self._node = node
+        self._nominal_value = deepcopy(value)
+        self._value = deepcopy(value)
+        self._value_type = value_type
+        self._dtype = dtype
+        self._shape = shape
+        self._strict = strict
+        self._time = float("nan")
 
-        if isinstance(self._name, str):
-            try:
-                self._config = self._full_config[self._name]
-            except KeyError:
-                self._config = {}
-        else:
-            self._config = {}
+    def add_fault(self, fault):
+        fault.add_target(self)
+        return fault
 
-        self._system: "NodeSystem" = None
+    def reset(self) -> None:
+        self._value = deepcopy(self._nominal_value)
+        self._time = float("nan")
 
-    def __getitem__(self, key: str) -> Union[InputPort, OutputPort]:
-        """Return a port by name.
+    def set_nominal(self, value: ParamT) -> None:
+        self.set(value)
+        self._nominal_value = deepcopy(value)
 
-        Parameters
-        ----------
-        key : str
-            Port name.
+    def set_contract(
+        self,
+        *,
+        value_type: Any | None = None,
+        dtype: Any = None,
+        shape: tuple[int | None, ...] | None = None,
+    ) -> None:
+        if value_type is not None:
+            self._value_type = value_type
+        if dtype is not None:
+            self._dtype = dtype
+        if shape is not None:
+            self._shape = shape
 
-        Returns
-        -------
-        InputPort or OutputPort
-            Matching port.
+    def set(self, value: ParamT, sim_time: float | None = None, *, strict: bool | None = None) -> None:
+        old_strict = self._strict
+        if strict is not None:
+            self._strict = strict
+        try:
+            if self._strict:
+                validate_value(
+                    value,
+                    self._value_type,
+                    dtype=self._dtype,
+                    shape=self._shape,
+                    label=self.full_name,
+                )
+            self._value = deepcopy(value)
+            if sim_time is not None:
+                self._time = float(sim_time)
+        finally:
+            self._strict = old_strict
 
-        Raises
-        ------
-        KeyError
-            If no port with ``key`` exists.
-        """
-        # Search the union of self._i and self._o for the port with this name
-        for p in self._i + self._o:
-            if p.name == key:
-                return p
-        raise KeyError(f"Port {key} not found in node {self._name}")
+    @property
+    def value(self) -> ParamT:
+        return self._value
 
-    def initialize(self):
-        """Initialize node state prior to simulation batches."""
+    @value.setter
+    def value(self, value: ParamT) -> None:
+        self.set(value)
+
+    @property
+    def sample(self) -> PortSample[ParamT]:
+        return PortSample(self._value, self._time)
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def attr_name(self) -> str:
+        return self._attr_name
+
+    @property
+    def full_name(self) -> str:
+        node_name = self._node.name or self._node.__class__.__name__
+        return f"{node_name}.{self._attr_name}"
+
+    @property
+    def node(self) -> "Node[Any, Any, Any, Any]":
+        return self._node
+
+    @property
+    def strict(self) -> bool:
+        return self._strict
+
+    @strict.setter
+    def strict(self, value: bool) -> None:
+        self._strict = bool(value)
+
+
+class Node(ABC, Generic[InputSpecT, OutputSpecT, ParameterSpecT, ConfigSpecT]):
+    """Base class for dataclass-specified syssim nodes."""
+
+    Inputs: ClassVar[type[Any]] = EmptySpec
+    Outputs: ClassVar[type[Any]] = EmptySpec
+    Parameters: ClassVar[type[Any]] = EmptySpec
+    Config: ClassVar[type[Any]] = EmptySpec
+
+    i: InputSpecT
+    o: OutputSpecT
+    p: ParameterSpecT
+    config: ConfigSpecT
+    _config: ConfigSpecT
+
+    def __init__(
+        self,
+        *,
+        config: object | None = None,
+        sample_frequency: float | None = None,
+        sample_period: float | None = None,
+        name: str | None = None,
+    ):
+        self._name = name
+        self._period = 1.0 / sample_frequency if sample_frequency is not None else sample_period
+        self._system = None
+        self.i = cast(InputSpecT, self._build_ports(self.Inputs, InputPort, "input"))
+        self.o = cast(OutputSpecT, self._build_ports(self.Outputs, OutputPort, "output"))
+        self.p = cast(ParameterSpecT, self._build_parameters(self.Parameters))
+        self.config = cast(ConfigSpecT, self._build_config(self.Config, config))
+        self._config = self.config
+
+    def __getitem__(self, key: str):
+        for item in (*self.iter_ports(), *self.iter_parameters()):
+            if item.name == key or item.attr_name == key:
+                return item
+        raise KeyError(f"{key!r} not found in node {self.name!r}")
+
+    def initialize(self) -> None:
         pass
 
-    def finalize(self, fault_history: Dict[float, Dict[str, bool]] = None):
-        """Finalize after simulation completes.
-
-        Parameters
-        ----------
-        fault_history : dict, optional
-            Mapping from simulation time to fault activation status.
-        """
+    def finalize(self, fault_history: dict[float, dict[str, bool]] | None = None) -> None:
         self._fault_history = fault_history or {}
+
+    @abstractmethod
+    def update(self, sim_time: float) -> None:
         pass
 
-    def update(self, sim_time: float):
-        """Execute one update at the given simulation time.
-
-        Parameters
-        ----------
-        sim_time : float
-            Current simulation time.
-        """
-        pass
-
-    def depends(self) -> List["Node"]:
-        """List node dependencies based on connected input ports.
-
-        Returns
-        -------
-        list of Node
-            Nodes that must execute before this one.
-        """
-        deps = list()
-        for p in self.i:
-            # TODO Fail warning if p is not an input port
-            # TODO Issue a warning for unconnected ports?
-            if p.output_port != None and p.output_port.node not in deps:
-                deps.append(p.output_port.node)
+    def depends(self) -> list["Node[Any, Any, Any, Any]"]:
+        deps = []
+        for input_item in self.iter_input_ports():
+            if input_item.source is not None and input_item.source.node not in deps:
+                deps.append(input_item.source.node)
         return deps
 
-    @property
-    def i(self):
-        """Input ports for this Node."""
-        return ()
+    def run_step(self, sim_time: float, inputs: Mapping[str, Any] | None = None) -> dict[str, PortSample]:
+        for name, input_value in (inputs or {}).items():
+            port = getattr(self.i, name)
+            value = input_value(sim_time) if callable(input_value) else input_value
+            if isinstance(value, PortSample):
+                port._write_sample(value)
+            else:
+                port.write(value, sim_time)
+        self.update(sim_time)
+        return {port.attr_name: port.read() for port in self.iter_output_ports()}
+
+    def iter_input_ports(self):
+        return _iter_spec_values(self.i)
+
+    def iter_output_ports(self):
+        return _iter_spec_values(self.o)
+
+    def iter_ports(self):
+        yield from self.iter_input_ports()
+        yield from self.iter_output_ports()
+
+    def iter_parameters(self):
+        return _iter_spec_values(self.p)
+
+    def set_strict_types(self, strict: bool) -> None:
+        for item in (*self.iter_ports(), *self.iter_parameters()):
+            item.strict = strict
 
     @property
-    def o(self):
-        """Output ports for this Node."""
-        return ()
-
-    @property
-    def p(self):
-        """Parameters for this Node."""
-        return ()
-
-    @property
-    def period(self) -> float:
-        """Update period in seconds."""
+    def period(self) -> float | None:
         return self._period
 
     @period.setter
-    def period(self, value: float):
-        self._period = value
+    def period(self, value: float | None) -> None:
+        self._period = None if value is None else float(value)
 
     @property
-    def frequency(self) -> Union[float, None]:
-        """Update frequency in Hz."""
-        if self._period is None:
-            return None
-        else:
-            return 1 / self._period
+    def frequency(self) -> float | None:
+        return None if self._period is None else 1.0 / self._period
 
     @frequency.setter
-    def frequency(self, value: float):
-        self._period = 1 / value
+    def frequency(self, value: float) -> None:
+        self._period = 1.0 / float(value)
 
     @property
     def n_inputs(self) -> int:
-        """Number of input ports."""
-        return len(self._i)
+        return len(tuple(self.iter_input_ports()))
 
     @property
     def n_outputs(self) -> int:
-        """Number of output ports."""
-        return len(self._o)
+        return len(tuple(self.iter_output_ports()))
 
     @property
-    def name(self) -> str:
-        """Name of the node."""
+    def name(self) -> str | None:
         return self._name
 
     @name.setter
-    def name(self, name: str):
+    def name(self, name: str | None) -> None:
         self._name = name
-        if isinstance(name, str):
-            try:
-                self._config = self._full_config[name]
-            except KeyError:
-                self._config = {}
+
+    def _build_ports(self, spec_cls, port_cls, kind: str):
+        spec = _new_spec(spec_cls, kind)
+        for spec_field in fields(spec):
+            meta = spec_field.metadata
+            if meta.get("syssim_kind", kind) != kind:
+                raise TypeError(f"{type(self).__name__}.{kind} spec field {spec_field.name!r} has wrong kind")
+            port_name = meta.get("name") or spec_field.name
+            setattr(
+                spec,
+                spec_field.name,
+                port_cls(
+                    port_name,
+                    self,
+                    attr_name=spec_field.name,
+                    value_type=meta.get("value_type", Any),
+                    dtype=meta.get("dtype"),
+                    shape=meta.get("shape"),
+                ),
+            )
+        return spec
+
+    def _build_parameters(self, spec_cls):
+        spec = _new_spec(spec_cls, "parameter")
+        for spec_field in fields(spec):
+            meta = spec_field.metadata
+            if meta.get("syssim_kind", "parameter") != "parameter":
+                raise TypeError(f"{type(self).__name__}.Parameters field {spec_field.name!r} has wrong kind")
+            default_factory = meta.get("default_factory", MISSING)
+            if default_factory is not MISSING:
+                default_value = default_factory()
+            else:
+                default_value = meta.get("default", None)
+                if default_value is MISSING:
+                    default_value = None
+            parameter_name = meta.get("name") or spec_field.name
+            setattr(
+                spec,
+                spec_field.name,
+                NodeParameter(
+                    parameter_name,
+                    default_value,
+                    self,
+                    attr_name=spec_field.name,
+                    value_type=meta.get("value_type", Any),
+                    dtype=meta.get("dtype"),
+                    shape=meta.get("shape"),
+                ),
+            )
+        return spec
+
+    def _build_config(self, spec_cls, config: object | None):
+        spec_cls = _ensure_dataclass(spec_cls, "Config")
+        if config is None:
+            return spec_cls()
+        if isinstance(config, spec_cls):
+            return config
+        raise TypeError(
+            f"{type(self).__name__} config must be a {spec_cls.__name__} dataclass instance or None"
+        )
 
 
-class NodeDifferential(Node):
-    """Base class for nodes that integrate differential equations.
+class NodeDifferential(
+    Node[InputSpecT, OutputSpecT, ParameterSpecT, ConfigSpecT],
+    Generic[StateT, InputSpecT, OutputSpecT, ParameterSpecT, ConfigSpecT],
+):
+    """Node base for systems whose output comes from integrated state."""
 
-    Differential nodes are assumed to depend only on inputs from the previous
-    simulation step, so they declare no dependencies and help avoid algebraic
-    loops in the execution order.
-    """
+    def __init__(self, initial_state: StateT, **kwargs):
+        self.initial_state = deepcopy(initial_state)
+        self.state = deepcopy(initial_state)
+        super().__init__(**kwargs)
 
-    def __init__(
-        self,
-        x0: array,
-        input_ports: List[str],
-        output_ports: List[str],
-        parameters: Union[NamedTuple, Tuple] = (),
-        **kwargs,
-    ):
-        """Construct a differential node.
+    def reset_state(self) -> None:
+        self.state = deepcopy(self.initial_state)
 
-        Parameters
-        ----------
-        x0 : array
-            Initial state for the modeled differential equation.
-        input_ports : list-like
-            Input ports for the node.
-        output_ports : list-like
-            Output ports for the node.
-        parameters : NamedTuple or tuple, optional
-            Parameters that may be faulted.
-        **kwargs
-            Forwarded to :class:`Node`.
-        """
+    def depends(self) -> list[Node[Any, Any, Any, Any]]:
+        return []
 
-        self._x = x0
-        self._x0 = x0
-        super().__init__(input_ports, output_ports, parameters, **kwargs)
+    def finalize(self, fault_history: dict[float, dict[str, bool]] | None = None) -> None:
+        self.reset_state()
+        super().finalize(fault_history)
 
-    def depends(self) -> List[Node]:
-        # Differential blocks have no dependencies...
-        return list()
 
-    def finalize(self, fault_history: Dict[float, Dict[str, bool]] = None):
-        self._x = deepcopy(self._x0)
-        return super().finalize(fault_history)
+def _ensure_dataclass(spec_cls, label: str):
+    if spec_cls is None:
+        return EmptySpec
+    if not is_dataclass(spec_cls):
+        raise TypeError(f"{label} must be a dataclass type")
+    return spec_cls
+
+
+def _new_spec(spec_cls, label: str):
+    return _ensure_dataclass(spec_cls, label)()
+
+
+def _iter_spec_values(spec):
+    return tuple(getattr(spec, item.name) for item in fields(spec))

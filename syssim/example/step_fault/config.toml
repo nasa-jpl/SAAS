@@ -1,6 +1,0 @@
-[scope]
-title='Filter Step Response (syssim)'
-xlabel='Time (s)'
-ylabel='System Response'
-save=false
-show=true
