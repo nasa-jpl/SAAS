@@ -12,6 +12,29 @@ class FaultBasicConfig:
     ``start_time_distribution``, ``duration_distribution``, and
     ``value_distribution`` are optional zero-argument callables for stochastic
     runs. Fixed defaults keep the common deterministic case small.
+
+    Attributes
+    ----------
+    name : str or None
+        Fault name used in logs and history.
+    start_time : float
+        Nominal activation time.
+    duration : float
+        Nominal active duration.
+    occurrence : float
+        Probability that the fault occurs in a batch.
+    action : str
+        Mutation action: ``"hold"``, ``"random"``, or ``"disconnect"``.
+    value : Any
+        Replacement value or default draw value.
+    index : int, sequence of int, or slice
+        Element indices to mutate.
+    start_time_distribution : callable, optional
+        Draws start time when provided.
+    duration_distribution : callable, optional
+        Draws duration when provided.
+    value_distribution : callable, optional
+        Draws replacement values when provided.
     """
 
     name: str | None = None
@@ -27,6 +50,20 @@ class FaultBasicConfig:
 
 
 class FaultBasic(Fault):
+    """Index-based fault for ports or parameters.
+
+    Parameters
+    ----------
+    config : FaultBasicConfig, optional
+        Fault configuration. Defaults to ``FaultBasicConfig()``.
+    port : InputPort or OutputPort, optional
+        Backward-compatible single port target.
+    targets : iterable, optional
+        Ports or parameters that this fault may mutate.
+    enabled : bool, optional
+        Whether the fault is eligible to trigger.
+    """
+
     Config = FaultBasicConfig
 
     def __init__(
@@ -37,7 +74,6 @@ class FaultBasic(Fault):
         *,
         enabled: bool = True,
     ):
-        """Create a basic index/value fault from a dataclass config."""
         self.config = config or FaultBasicConfig()
         if not isinstance(self.config, FaultBasicConfig):
             raise TypeError("FaultBasic config must be a FaultBasicConfig dataclass instance or None")
@@ -49,14 +85,21 @@ class FaultBasic(Fault):
         self._state = (None, None, None)
 
     def __repr__(self) -> str:
+        """Return a compact realization summary.
+
+        Returns
+        -------
+        str
+            Human-readable fault realization state.
+        """
         if self._state[2] == True:
             return f"Basic Fault [{self.name}]: start={self._state[0]}, duration={self._state[1]}"
         else:
             return f"Basic Fault [{self.name}]: does not occur"
 
     def initialize(self):
-        super().initialize()
         """Generate fault realization for the current batch."""
+        super().initialize()
         self._state = (
             _draw(self.config.start_time, self.config.start_time_distribution),
             _draw(self.config.duration, self.config.duration_distribution),
@@ -64,22 +107,58 @@ class FaultBasic(Fault):
         )
 
     def start_time(self) -> float:
-        """Start time for this realization."""
+        """Start time for this realization.
+
+        Returns
+        -------
+        float
+            Realized activation time.
+        """
         return self._state[0]
 
     def duration(self) -> float:
-        """Duration for this realization."""
+        """Duration for this realization.
+
+        Returns
+        -------
+        float
+            Realized active duration.
+        """
         return self._state[1]
 
     def is_occuring(self) -> bool:
-        """Whether the fault occurs in the current realization."""
+        """Return whether the fault occurs in the current realization.
+
+        Returns
+        -------
+        bool
+            ``True`` when this batch includes the fault.
+        """
         return self._state[2]
 
     def get_name(self) -> str:
-        """Return the fault name."""
+        """Return the fault name.
+
+        Returns
+        -------
+        str
+            Fault name.
+        """
         return self.name
 
     def trigger(self, context: FaultContext) -> bool:
+        """Return whether the fault is active at the context time.
+
+        Parameters
+        ----------
+        context : FaultContext
+            Context for the current simulation instant.
+
+        Returns
+        -------
+        bool
+            ``True`` while the realized time window is active.
+        """
         if self._state[0] is None:
             self.initialize()
         start = self.start_time()
@@ -87,6 +166,13 @@ class FaultBasic(Fault):
         return bool(self.is_occuring() and start <= context.time and context.time < end - 1e-12)
 
     def mutate(self, context: FaultContext) -> None:
+        """Apply configured mutation to each target in the context.
+
+        Parameters
+        ----------
+        context : FaultContext
+            Context containing writable targets for the current phase.
+        """
         for target in context.targets:
             sample = context.read(target)
             context.write(target, self._mutate_value(sample.value), sample_time=sample.time)

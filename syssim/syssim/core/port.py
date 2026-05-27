@@ -12,12 +12,29 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class PortSample(Generic[T]):
-    """A value carried by a port and the simulation time that produced it."""
+    """Value carried by a port and the time that produced it.
+
+    Parameters
+    ----------
+    value : T
+        Payload stored on the port.
+    time : float
+        Simulation time associated with ``value``.
+    """
 
     value: T
     time: float
 
     def __iter__(self):
+        """Iterate over ``(value, time)``.
+
+        Yields
+        ------
+        T
+            Stored payload.
+        float
+            Simulation time associated with the payload.
+        """
         yield self.value
         yield self.time
 
@@ -30,7 +47,26 @@ def validate_value(
     shape: tuple[int | None, ...] | None = None,
     label: str = "value",
 ) -> None:
-    """Validate a runtime value against a compact syssim type contract."""
+    """Validate a runtime value against a compact syssim type contract.
+
+    Parameters
+    ----------
+    value : Any
+        Runtime value to validate.
+    expected_type : Any, optional
+        Python type or typing annotation accepted for ``value``.
+    dtype : Any, optional
+        Required NumPy dtype when ``value`` is an array.
+    shape : tuple of int or None, optional
+        Required NumPy array shape. ``None`` entries match any size.
+    label : str, optional
+        Human-readable name used in validation errors.
+
+    Raises
+    ------
+    TypeError
+        If ``value`` does not satisfy the requested contract.
+    """
     if value is None or expected_type in (Any, object, None):
         return
 
@@ -68,6 +104,26 @@ def _matches_type(value: Any, expected_type: Any) -> bool:
 
 
 class _Port(Generic[T]):
+    """Base storage and validation behavior shared by ports.
+
+    Parameters
+    ----------
+    name : str
+        External port name.
+    node : Node
+        Node that owns the port.
+    attr_name : str, optional
+        Attribute name used on the node spec dataclass.
+    value_type : Any, optional
+        Runtime type contract used when strict validation is enabled.
+    dtype : Any, optional
+        Required NumPy dtype for strict array validation.
+    shape : tuple of int or None, optional
+        Required NumPy shape for strict array validation.
+    strict : bool, optional
+        Whether validation is enforced when values are written.
+    """
+
     def __init__(
         self,
         name: str,
@@ -89,15 +145,38 @@ class _Port(Generic[T]):
         self._sample: PortSample[T | None] = PortSample(None, float("nan"))
 
     def read(self) -> PortSample[T | None]:
-        """Return the current value with its production timestamp."""
+        """Return the current value with its production timestamp.
+
+        Returns
+        -------
+        PortSample
+            Current port sample. Unwritten ports contain ``None`` and ``nan``.
+        """
         return self._sample
 
     def read_with_time(self):
-        """Return ``(value, time)`` for compatibility with older examples."""
+        """Return the current sample as a tuple.
+
+        Returns
+        -------
+        tuple
+            Pair ``(value, time)`` for compatibility with older examples.
+        """
         return self._sample.value, self._sample.time
 
     def add_fault(self, fault):
-        """Register this port as a mutable target for a fault."""
+        """Register this port as a mutable target for a fault.
+
+        Parameters
+        ----------
+        fault : Fault
+            Fault object that should be allowed to mutate this port.
+
+        Returns
+        -------
+        Fault
+            The same fault, enabling fluent construction.
+        """
         fault.add_target(self)
         return fault
 
@@ -108,6 +187,17 @@ class _Port(Generic[T]):
         dtype: Any = None,
         shape: tuple[int | None, ...] | None = None,
     ) -> None:
+        """Update the runtime validation contract for this port.
+
+        Parameters
+        ----------
+        value_type : Any, optional
+            Python type or typing annotation accepted for future values.
+        dtype : Any, optional
+            Required NumPy dtype for future array values.
+        shape : tuple of int or None, optional
+            Required NumPy array shape. ``None`` entries match any size.
+        """
         if value_type is not None:
             self._value_type = value_type
         if dtype is not None:
@@ -137,32 +227,84 @@ class _Port(Generic[T]):
 
     @property
     def name(self) -> str:
+        """External port name.
+
+        Returns
+        -------
+        str
+            Name used in display and lookup.
+        """
         return self._name
 
     @property
     def attr_name(self) -> str:
+        """Port spec attribute name.
+
+        Returns
+        -------
+        str
+            Dataclass attribute name for this port.
+        """
         return self._attr_name
 
     @property
     def full_name(self) -> str:
+        """Fully qualified port name.
+
+        Returns
+        -------
+        str
+            Name formatted as ``node.port``.
+        """
         node_name = self._node.name or self._node.__class__.__name__
         return f"{node_name}.{self._attr_name}"
 
     @property
     def node(self) -> "Node[Any, Any, Any, Any]":
+        """Node that owns this port.
+
+        Returns
+        -------
+        Node
+            Owning node.
+        """
         return self._node
 
     @property
     def strict(self) -> bool:
+        """Whether strict runtime validation is enabled.
+
+        Returns
+        -------
+        bool
+            ``True`` when writes enforce the port contract.
+        """
         return self._strict
 
     @strict.setter
     def strict(self, value: bool) -> None:
+        """Set strict runtime validation.
+
+        Parameters
+        ----------
+        value : bool
+            Whether future writes should enforce the port contract.
+        """
         self._strict = bool(value)
 
 
 class InputPort(_Port[T]):
-    """Input boundary for a node."""
+    """Input boundary for a node.
+
+    Parameters
+    ----------
+    name : str
+        External port name.
+    node : Node
+        Node that owns this input.
+    **kwargs
+        Additional validation metadata forwarded to ``_Port``.
+    """
 
     def __init__(self, name: str, node: "Node", **kwargs):
         super().__init__(name, node, **kwargs)
@@ -170,10 +312,24 @@ class InputPort(_Port[T]):
 
     @property
     def output_port(self) -> OutputPort[T] | None:
+        """Output port currently connected to this input.
+
+        Returns
+        -------
+        OutputPort or None
+            Upstream source, or ``None`` if the input is unconnected.
+        """
         return self._source
 
     @property
     def source(self) -> OutputPort[T] | None:
+        """Alias for ``output_port``.
+
+        Returns
+        -------
+        OutputPort or None
+            Upstream source, or ``None`` if the input is unconnected.
+        """
         return self._source
 
     def _connect(self, output_port: "OutputPort[T]") -> None:
@@ -182,18 +338,51 @@ class InputPort(_Port[T]):
         self._source = output_port
 
     def write(self, value: T, sim_time: float) -> None:
+        """Write a value directly to the input port.
+
+        Parameters
+        ----------
+        value : T
+            Payload to store.
+        sim_time : float
+            Simulation time associated with ``value``.
+        """
         self._set_sample(PortSample(value, sim_time))
 
     def _write_sample(self, sample: PortSample[T], *, strict: bool | None = None) -> None:
         self._set_sample(sample, strict=strict)
 
     def __lshift__(self, output_port: "OutputPort[T]"):
+        """Connect an output using ``input_port << output_port``.
+
+        Parameters
+        ----------
+        output_port : OutputPort
+            Upstream output to connect.
+
+        Returns
+        -------
+        InputPort
+            This input port.
+        """
         output_port.connect(self)
         return self
 
 
 class OutputPort(_Port[T]):
-    """Output boundary for a node; one output can fan out to many inputs."""
+    """Output boundary for a node.
+
+    One output can fan out to many inputs.
+
+    Parameters
+    ----------
+    name : str
+        External port name.
+    node : Node
+        Node that owns this output.
+    **kwargs
+        Additional validation metadata forwarded to ``_Port``.
+    """
 
     def __init__(self, name: str, node: "Node", **kwargs):
         super().__init__(name, node, **kwargs)
@@ -201,9 +390,30 @@ class OutputPort(_Port[T]):
 
     @property
     def input_ports(self) -> tuple[InputPort[T], ...]:
+        """Inputs currently connected to this output.
+
+        Returns
+        -------
+        tuple of InputPort
+            Downstream input ports receiving propagated samples.
+        """
         return tuple(self._inputs)
 
     def connect(self, input_port: InputPort[T]) -> None:
+        """Connect this output to an input port.
+
+        Parameters
+        ----------
+        input_port : InputPort
+            Downstream input to receive samples from this output.
+
+        Raises
+        ------
+        TypeError
+            If ``input_port`` is not an ``InputPort``.
+        ValueError
+            If the input is already connected to a different output.
+        """
         if not isinstance(input_port, InputPort):
             raise TypeError("OutputPort can only connect to InputPort")
         input_port._connect(self)
@@ -211,15 +421,40 @@ class OutputPort(_Port[T]):
             self._inputs.append(input_port)
 
     def connect_input(self, input_port: InputPort[T]) -> None:
+        """Compatibility wrapper for ``connect``.
+
+        Parameters
+        ----------
+        input_port : InputPort
+            Downstream input to receive samples from this output.
+        """
         self.connect(input_port)
 
     def write(self, value: T, sim_time: float) -> None:
+        """Write a value and propagate it to connected inputs.
+
+        Parameters
+        ----------
+        value : T
+            Payload to store and propagate.
+        sim_time : float
+            Simulation time associated with ``value``.
+        """
         sample = PortSample(value, sim_time)
         self._set_sample(sample)
         for input_port in self._inputs:
             input_port._write_sample(sample)
 
     def shift_out(self, value: T, sim_time: float) -> None:
+        """Compatibility alias for ``write``.
+
+        Parameters
+        ----------
+        value : T
+            Payload to store and propagate.
+        sim_time : float
+            Simulation time associated with ``value``.
+        """
         self.write(value, sim_time)
 
     def _write_sample(
@@ -235,6 +470,18 @@ class OutputPort(_Port[T]):
                 input_port._write_sample(sample, strict=strict)
 
     def __rshift__(self, input_port: InputPort[T]):
+        """Connect an input using ``output_port >> input_port``.
+
+        Parameters
+        ----------
+        input_port : InputPort
+            Downstream input to connect.
+
+        Returns
+        -------
+        InputPort
+            Connected input port.
+        """
         self.connect(input_port)
         return input_port
 

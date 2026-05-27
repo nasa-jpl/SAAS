@@ -23,7 +23,15 @@ from syssim.core.port import InputPort, OutputPort, PortSample
 
 
 class NodeSystem:
-    """Collection of connected nodes, faults, schedules, and logs."""
+    """Collection of connected nodes, faults, schedules, and logs.
+
+    Parameters
+    ----------
+    strict_types : bool, optional
+        Enforce declared port and parameter type contracts at runtime.
+    enable_faults : bool, optional
+        Evaluate and apply registered faults during simulation.
+    """
 
     def __init__(self, *, strict_types: bool = False, enable_faults: bool = True):
         self.strict_types = bool(strict_types)
@@ -43,6 +51,13 @@ class NodeSystem:
         self._logger: CsvSimulationLogger | None = None
 
     def __repr__(self) -> str:
+        """Return a compact text summary of registered nodes and ports.
+
+        Returns
+        -------
+        str
+            One line per node in the system.
+        """
         lines = []
         for node in self._nodes:
             ports = [port.attr_name for port in node.iter_ports()]
@@ -51,13 +66,44 @@ class NodeSystem:
 
     @property
     def nodes(self) -> tuple[Node, ...]:
+        """Registered nodes.
+
+        Returns
+        -------
+        tuple of Node
+            Nodes in insertion order.
+        """
         return tuple(self._nodes)
 
     @property
     def faults(self) -> tuple[Fault, ...]:
+        """Registered faults.
+
+        Returns
+        -------
+        tuple of Fault
+            Faults in insertion order.
+        """
         return tuple(self._faults)
 
     def add_node(self, node: Node) -> Node:
+        """Register a node with the system.
+
+        Parameters
+        ----------
+        node : Node
+            Node instance to add.
+
+        Returns
+        -------
+        Node
+            The same node after name assignment and strictness configuration.
+
+        Raises
+        ------
+        ValueError
+            If another registered node already has the requested name.
+        """
         names = {item.name for item in self._nodes}
         if node.name is None:
             node.name = self._default_name(node.__class__.__name__, names)
@@ -69,6 +115,20 @@ class NodeSystem:
         return node
 
     def add_faults(self, faults: Fault | Iterable[Fault]) -> None:
+        """Register one or more faults with the system.
+
+        Parameters
+        ----------
+        faults : Fault or iterable of Fault
+            Fault instance or collection of instances to add.
+
+        Raises
+        ------
+        TypeError
+            If any object is not a ``Fault``.
+        ValueError
+            If another registered fault already has the requested name.
+        """
         if isinstance(faults, Fault):
             faults = (faults,)
         names = {fault.name for fault in self._faults if fault.name is not None}
@@ -83,24 +143,80 @@ class NodeSystem:
             self._faults.append(fault)
 
     def detect_fault(self, name: str, time: float) -> None:
+        """Record an externally detected fault event.
+
+        Parameters
+        ----------
+        name : str
+            Fault name or detection label.
+        time : float
+            Simulation time of the detection.
+        """
         self._detected_faults.append((name, float(time)))
 
     def get_node(self, node_name: str) -> Node | None:
+        """Return a registered node by name.
+
+        Parameters
+        ----------
+        node_name : str
+            Name assigned to the node.
+
+        Returns
+        -------
+        Node or None
+            Matching node, or ``None`` if absent.
+        """
         return next((node for node in self._nodes if node.name == node_name), None)
 
     def get_faults(self) -> list[Fault]:
+        """Return registered faults as a mutable copy.
+
+        Returns
+        -------
+        list of Fault
+            Registered faults in insertion order.
+        """
         return list(self._faults)
 
     def get_fault_detections(self) -> list[tuple[str, float]]:
+        """Return recorded fault detections.
+
+        Returns
+        -------
+        list of tuple
+            Pairs ``(name, time)`` recorded by ``detect_fault``.
+        """
         return list(self._detected_faults)
 
     def get_fault_history(self) -> dict[float, dict[str, bool]]:
+        """Return fault active-state history.
+
+        Returns
+        -------
+        dict
+            Mapping from simulation time to ``{fault_name: active}``.
+        """
         return dict(self._fault_history)
 
     def get_output_dir(self) -> str | None:
+        """Return the active simulation output directory.
+
+        Returns
+        -------
+        str or None
+            Output directory path, or ``None`` when no directory is active.
+        """
         return None if self._output_dir is None else str(self._output_dir)
 
     def initialize(self, dt: float | None = None) -> None:
+        """Prepare nodes, faults, timing, and execution order for a run.
+
+        Parameters
+        ----------
+        dt : float, optional
+            Default sample period for nodes that do not define one.
+        """
         self._prepare_timing(dt)
         self._ex_plan = self.compile()
         self._t = 0.0
@@ -116,6 +232,18 @@ class NodeSystem:
         self._initialized = True
 
     def step(self, dt: float | None = None) -> dict[str, PortSample]:
+        """Advance the system by one manual step.
+
+        Parameters
+        ----------
+        dt : float, optional
+            Step duration. Defaults to the prepared base timestep.
+
+        Returns
+        -------
+        dict
+            Port samples keyed by fully qualified port name.
+        """
         if not self._initialized:
             self.initialize(dt)
         step_dt = self._base_dt if dt is None else float(dt)
@@ -125,6 +253,7 @@ class NodeSystem:
         return self.samples()
 
     def finalize(self) -> None:
+        """Finalize nodes, close log files, and clear initialized state."""
         for node in self._nodes:
             node.finalize(fault_history=self._fault_history)
         if self._logger is not None:
@@ -146,6 +275,31 @@ class NodeSystem:
         batches: int = 1,
         show_progress: bool = True,
     ) -> None:
+        """Simulate the system until a final time.
+
+        Parameters
+        ----------
+        t_f : float
+            Final simulation time in seconds.
+        dt : float, optional
+            Default sample period for nodes without an explicit period.
+        log_dir : str or pathlib.Path, optional
+            Directory for CSV logs. Logging is disabled when omitted.
+        save_dir : str or pathlib.Path, optional
+            Output directory for nodes that save artifacts without CSV logs.
+        sim_name : str, optional
+            Run name used to create timestamped output subdirectories.
+        log_values : bool, optional
+            Write port and parameter values to ``values.csv``.
+        log_faults : bool, optional
+            Write fault states to ``faults.csv``.
+        enable_faults : bool, optional
+            Temporary override for fault evaluation during this simulation.
+        batches : int, optional
+            Number of independent simulation batches to run.
+        show_progress : bool, optional
+            Display a Rich progress bar.
+        """
         previous_enable_faults = self.enable_faults
         if enable_faults is not None:
             self.enable_faults = bool(enable_faults)
@@ -174,6 +328,20 @@ class NodeSystem:
             self.enable_faults = previous_enable_faults
 
     def compile(self) -> list[Node]:
+        """Topologically sort registered nodes by port dependencies.
+
+        Returns
+        -------
+        list of Node
+            Execution plan for one simulation timestep.
+
+        Raises
+        ------
+        ValueError
+            If a dependency node is not registered with the system.
+        RuntimeError
+            If the node dependency graph contains an algebraic cycle.
+        """
         dependencies = {node: tuple(node.depends()) for node in self._nodes}
         unknown = {dep for deps in dependencies.values() for dep in deps if dep not in self._nodes}
         if unknown:
@@ -193,9 +361,23 @@ class NodeSystem:
             raise RuntimeError("Failed to compile node graph; topological cycle detected") from exc
 
     def samples(self) -> dict[str, PortSample]:
+        """Return all current port samples.
+
+        Returns
+        -------
+        dict
+            Port samples keyed by fully qualified port name.
+        """
         return {port.full_name: port.read() for node in self._nodes for port in node.iter_ports()}
 
     def parameter_values(self) -> dict[str, object]:
+        """Return all current parameter values.
+
+        Returns
+        -------
+        dict
+            Parameter values keyed by fully qualified parameter name.
+        """
         return {parameter.full_name: parameter.value for node in self._nodes for parameter in node.iter_parameters()}
 
     def _run_time(self, time: float) -> None:

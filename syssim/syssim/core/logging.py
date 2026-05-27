@@ -9,7 +9,17 @@ import numpy as np
 
 
 class CsvSimulationLogger:
-    """Small CSV writer for syssim value and fault logs."""
+    """CSV writer for syssim value and fault logs.
+
+    Parameters
+    ----------
+    directory : str or pathlib.Path
+        Directory where log files are created.
+    values : bool, optional
+        Create and write ``values.csv``.
+    faults : bool, optional
+        Create and write ``faults.csv``.
+    """
 
     def __init__(self, directory: str | Path, *, values: bool = True, faults: bool = True):
         self.directory = Path(directory)
@@ -36,6 +46,15 @@ class CsvSimulationLogger:
             self.faults_writer.writeheader()
 
     def log_values(self, time: float, system: "NodeSystem") -> None:
+        """Write current port and parameter values.
+
+        Parameters
+        ----------
+        time : float
+            Simulation time for this log row batch.
+        system : NodeSystem
+            System whose nodes, ports, and parameters should be recorded.
+        """
         if self.values_writer is None:
             return
         for node in system.nodes:
@@ -67,6 +86,15 @@ class CsvSimulationLogger:
                 )
 
     def log_faults(self, time: float, faults) -> None:
+        """Write current fault states and transition events.
+
+        Parameters
+        ----------
+        time : float
+            Simulation time for this log row batch.
+        faults : iterable of Fault
+            Faults to record.
+        """
         if self.faults_writer is None:
             return
         for fault in faults:
@@ -93,6 +121,7 @@ class CsvSimulationLogger:
             )
 
     def close(self) -> None:
+        """Close any open CSV file handles."""
         for file_obj in (self._value_file, self._fault_file):
             if file_obj is not None:
                 file_obj.close()

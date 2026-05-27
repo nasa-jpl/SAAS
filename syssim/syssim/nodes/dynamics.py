@@ -8,17 +8,45 @@ from syssim.core import EmptySpec, InputPort, NodeDifferential, NodeParameter, O
 
 @dataclass
 class NodeStateSpaceInputs:
+    """Input specification for ``NodeStateSpace``.
+
+    Attributes
+    ----------
+    u : InputPort
+        Input vector with shape ``(m,)``.
+    """
+
     u: InputPort[np.ndarray] = input_port(np.ndarray)
     """Input port for the state-space node. Expects a 1D array of shape (m,)."""
 
 @dataclass
 class NodeStateSpaceOutputs:
+    """Output specification for ``NodeStateSpace``.
+
+    Attributes
+    ----------
+    y : OutputPort
+        Output vector with shape ``(p,)``.
+    """
+
     y: OutputPort[np.ndarray] = output_port(np.ndarray)
     """Output port for the state-space node. Expects a 1D array of shape (p,)."""
 
 
 @dataclass
 class NodeStateSpaceParameters:
+    """Parameter specification for ``NodeStateSpace``.
+
+    Attributes
+    ----------
+    a : NodeParameter
+        State transition matrix with shape ``(n, n)``.
+    b : NodeParameter
+        Input matrix with shape ``(n, m)``.
+    c : NodeParameter
+        Output matrix with shape ``(p, n)``.
+    """
+
     a: NodeParameter[np.ndarray] = parameter(default_factory=lambda: np.empty((0, 0)), value_type=np.ndarray)
     """State transition matrix of shape (n, n)."""
     b: NodeParameter[np.ndarray] = parameter(default_factory=lambda: np.empty((0, 0)), value_type=np.ndarray)
@@ -36,6 +64,25 @@ class NodeStateSpace(
         EmptySpec,
     ]
 ):
+    """Continuous linear state-space node without feedthrough.
+
+    The node integrates ``x_dot = A x + B u`` and emits ``y = C x``. Input
+    ``u`` defaults to zeros until a sample is available.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        State transition matrix with shape ``(n, n)``.
+    b : np.ndarray
+        Input matrix with shape ``(n, m)``.
+    c : np.ndarray
+        Output matrix with shape ``(p, n)``.
+    x0 : np.ndarray
+        Initial state vector with shape ``(n,)``.
+    **kwargs
+        Arguments forwarded to ``NodeDifferential``.
+    """
+
     Inputs = NodeStateSpaceInputs
     Outputs = NodeStateSpaceOutputs
     Parameters = NodeStateSpaceParameters
@@ -70,10 +117,18 @@ class NodeStateSpace(
         self.o.y.set_contract(value_type=np.ndarray, dtype=float, shape=(self.p.c.value.shape[0],))
 
     def initialize(self):
+        """Reset integration time and state before a run."""
         self._t = 0.0
         self.reset_state()
 
     def update(self, sim_time: float):
+        """Integrate state to ``sim_time`` and write the output sample.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time in seconds.
+        """
         u = self.i.u.read().value
         if u is None:
             u = np.zeros(self.p.b.value.shape[1], dtype=float)
