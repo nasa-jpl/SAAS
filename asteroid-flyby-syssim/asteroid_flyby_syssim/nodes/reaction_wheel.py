@@ -35,11 +35,25 @@ class NodeTorqueAllocator(Node[NodeTorqueAllocatorInputs, NodeTorqueAllocatorOut
     Outputs = NodeTorqueAllocatorOutputs
 
     def __init__(self, **kwargs):
+        """Initialize the torque allocator node.
+
+        Parameters
+        ----------
+        **kwargs
+            Additional keyword arguments forwarded to ``Node``.
+        """
         super().__init__(**kwargs)
         self._i = self.i
         self._o = self.o
 
     def update(self, sim_time: float):
+        """Allocate a body torque command to tetrahedral wheel axes.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         tau_cmd_body = self.i.tau_cmd_body.read().value
         if tau_cmd_body is None:
             tau_cmd_body = np.zeros(3, dtype=float)
@@ -77,6 +91,19 @@ class NodeReactionWheel(
     Outputs = NodeReactionWheelOutputs
 
     def __init__(self, wheel_idx: int, cfg: Any, wheel_axis: np.ndarray, **kwargs):
+        """Initialize a single reaction wheel model.
+
+        Parameters
+        ----------
+        wheel_idx : int
+            Index of the wheel within the tetrahedral wheel set.
+        cfg : Any
+            Configuration object with wheel inertia, limits, friction, lag, and jitter fields.
+        wheel_axis : np.ndarray
+            Wheel spin axis expressed in body coordinates.
+        **kwargs
+            Additional keyword arguments forwarded to ``NodeDifferential``.
+        """
         self._wheel_idx = wheel_idx
         self._cfg = cfg
         self._wheel_axis = normalize(wheel_axis)
@@ -89,18 +116,35 @@ class NodeReactionWheel(
         self._o = self.o
 
     def initialize(self):
+        """Reset wheel speed, command lag, and deterministic noise state."""
         self._t = 0.0
         self._tau_cmd_lagged = 0.0
         self._rng = np.random.default_rng(7 + self._wheel_idx)
         self.reset_state()
 
     def reset_state(self, omega_rads: float = 0.0, sim_time: float = 0.0):
+        """Reset wheel angular speed and internal lag/noise state.
+
+        Parameters
+        ----------
+        omega_rads : float, optional
+            Initial wheel angular speed [rad/s].
+        sim_time : float, optional
+            Simulation time associated with the reset state [s].
+        """
         self.state = np.array([omega_rads], dtype=float)
         self._t = float(sim_time)
         self._tau_cmd_lagged = 0.0
         self._rng = np.random.default_rng(7 + self._wheel_idx)
 
     def update(self, sim_time: float):
+        """Advance wheel speed and write momentum and torque outputs.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         dt = sim_time - self._t
         if dt <= 0.0:
             return
@@ -181,11 +225,25 @@ class NodeWheelAggregator(Node[NodeWheelAggregatorInputs, NodeWheelAggregatorOut
     Outputs = NodeWheelAggregatorOutputs
 
     def __init__(self, **kwargs):
+        """Initialize the wheel aggregation node.
+
+        Parameters
+        ----------
+        **kwargs
+            Additional keyword arguments forwarded to ``Node``.
+        """
         super().__init__(**kwargs)
         self._i = self.i
         self._o = self.o
 
     def update(self, sim_time: float):
+        """Sum wheel momentum and torque contributions.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         h_rw = np.zeros(3, dtype=float)
         tau_rw = np.zeros(3, dtype=float)
         for idx in range(4):

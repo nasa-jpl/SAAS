@@ -42,14 +42,29 @@ class NodeCenterPointingGuidance(
     Outputs = NodeCenterPointingGuidanceOutputs
 
     def __init__(self, **kwargs):
+        """Initialize the center-pointing guidance node.
+
+        Parameters
+        ----------
+        **kwargs
+            Additional keyword arguments forwarded to ``Node``.
+        """
         super().__init__(**kwargs)
         self._i = self.i
         self._o = self.o
 
     def initialize(self):
+        """Initialize the previous attitude command for continuity."""
         self._q_cmd_prev_bi = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
 
     def update(self, sim_time: float):
+        """Generate a center-pointing attitude command.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         position_sc_i_m = self.i.position.read().value
         velocity_sc_i_mps = self.i.velocity.read().value
 
@@ -97,12 +112,28 @@ class NodeLookVector(Node[NodeLookVectorInputs, NodeLookVectorOutputs, EmptySpec
     Outputs = NodeLookVectorOutputs
 
     def __init__(self, boresight_body: tuple[float, float, float], **kwargs):
+        """Initialize body-frame boresight geometry.
+
+        Parameters
+        ----------
+        boresight_body : tuple[float, float, float]
+            Camera boresight vector expressed in body coordinates.
+        **kwargs
+            Additional keyword arguments forwarded to ``Node``.
+        """
         self._boresight_body = normalize(np.array(boresight_body, dtype=float))
         super().__init__(**kwargs)
         self._i = self.i
         self._o = self.o
 
     def update(self, sim_time: float):
+        """Compute inertial look vector and target point.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         q = self.i.q.read().value
         pos = self.i.position.read().value
         if q is None:

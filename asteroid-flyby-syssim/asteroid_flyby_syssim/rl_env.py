@@ -29,11 +29,37 @@ from .flyby_sim import (
 
 
 def _quat_wxyz_to_xyzw(q_wxyz: np.ndarray) -> np.ndarray:
+    """Convert a scalar-first quaternion to SciPy order.
+
+    Parameters
+    ----------
+    q_wxyz : np.ndarray
+        Quaternion in ``[w, x, y, z]`` order.
+
+    Returns
+    -------
+    np.ndarray
+        Quaternion in ``[x, y, z, w]`` order.
+    """
     q_wxyz = np.asarray(q_wxyz, dtype=float)
     return np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], dtype=float)
 
 
 def _body_axis_to_inertial(q_bi_wxyz: np.ndarray, axis_body: np.ndarray) -> np.ndarray:
+    """Rotate a body-frame axis into inertial coordinates.
+
+    Parameters
+    ----------
+    q_bi_wxyz : np.ndarray
+        Body-to-inertial quaternion in ``[w, x, y, z]`` order.
+    axis_body : np.ndarray
+        Axis vector expressed in body coordinates.
+
+    Returns
+    -------
+    np.ndarray
+        Axis vector expressed in inertial coordinates.
+    """
     rotation = Rotation.from_quat(_quat_wxyz_to_xyzw(q_bi_wxyz))
     return rotation.apply(np.asarray(axis_body, dtype=float))
 
@@ -43,6 +69,22 @@ def _centering_error_deg(
     position_sc_i_m: np.ndarray,
     boresight_body: np.ndarray,
 ) -> float:
+    """Compute the camera boresight centering error.
+
+    Parameters
+    ----------
+    q_bi_wxyz : np.ndarray
+        Body-to-inertial attitude quaternion in ``[w, x, y, z]`` order.
+    position_sc_i_m : np.ndarray
+        Spacecraft position relative to asteroid center [m].
+    boresight_body : np.ndarray
+        Camera boresight vector expressed in body coordinates.
+
+    Returns
+    -------
+    float
+        Angular error between boresight and asteroid center direction [deg].
+    """
     boresight_i = _body_axis_to_inertial(q_bi_wxyz, boresight_body)
     target_i = -np.asarray(position_sc_i_m, dtype=float)
 
@@ -195,6 +237,20 @@ class AsteroidTrackingEnv(gym.Env):
 
     @staticmethod
     def _sample_uniform(rng: np.random.Generator, bounds: tuple[float, float]) -> float:
+        """Sample uniformly from a possibly reversed interval.
+
+        Parameters
+        ----------
+        rng : np.random.Generator
+            Random number generator used for sampling.
+        bounds : tuple[float, float]
+            Lower and upper bounds. Reversed bounds are accepted.
+
+        Returns
+        -------
+        float
+            Uniform sample from the interval.
+        """
         lo, hi = bounds
         if hi < lo:
             lo, hi = hi, lo
@@ -244,6 +300,7 @@ class AsteroidTrackingEnv(gym.Env):
         return cfg
 
     def _bind_system_io_nodes(self):
+        """Bind external syssim nodes used for actions and observations."""
         self._rl_action_input = self._system.get_node("rl_action_input")
         self._gyro_output = self._system.get_node("rl_gyro_output")
         self._camera_image_output = self._system.get_node("rl_camera_image_output")
@@ -257,6 +314,7 @@ class AsteroidTrackingEnv(gym.Env):
             camera_node.frequency = float(self.rl_config.render_at_frequency)
 
     def _reset_simulation_state(self):
+        """Reset reusable syssim nodes to the current flyby configuration."""
         gravity = self._system.get_node("gravity")
         translational = self._system.get_node("translational")
         attitude = self._system.get_node("attitude")

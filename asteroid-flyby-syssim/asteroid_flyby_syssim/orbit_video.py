@@ -14,6 +14,28 @@ from .nodes import NodeAsteroidCamera, NodeAsteroidGravity, NodeOrbitDynamics, N
 
 @dataclass
 class OrbitConfig:
+	"""Configuration for rendering a short asteroid orbit video.
+
+	Attributes
+	----------
+	asteroid : str
+		Asteroid model name to render.
+	camera_fps : float
+		Camera render sampling frequency [Hz].
+	sim_dt : float
+		Simulation step size [s].
+	radius_scale : float
+		Circular orbit radius as a multiple of asteroid reference radius.
+	camera_fov_deg : float
+		Camera field of view [deg].
+	spp : int
+		Mitsuba samples per pixel.
+	resolution_width : int
+		Rendered image width [px].
+	resolution_height : int
+		Rendered image height [px].
+	"""
+
 	asteroid: str = "Ceres"
 	"""Asteroid model name to render."""
 	camera_fps: float = 0.01  # Render 1 frame every 100 s.
@@ -33,6 +55,18 @@ class OrbitConfig:
 
 
 def build_system(config: OrbitConfig) -> NodeSystem:
+	"""Build a circular-orbit camera rendering system.
+
+	Parameters
+	----------
+	config : OrbitConfig
+		Orbit rendering configuration.
+
+	Returns
+	-------
+	syssim.core.NodeSystem
+		Configured syssim graph with orbit, gravity, camera, and frame collection nodes.
+	"""
 	system = NodeSystem()
 
 	gravity_node = NodeAsteroidGravity(asteroid=config.asteroid, name="asteroid_gravity")
@@ -85,6 +119,7 @@ def build_system(config: OrbitConfig) -> NodeSystem:
 
 
 def main():
+	"""Run the orbit video example from default configuration."""
 	config = OrbitConfig()
 	system = build_system(config)
 

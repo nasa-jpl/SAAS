@@ -150,6 +150,7 @@ class NodeGyroscope(Node[NodeGyroscopeInputs, NodeGyroscopeOutputs, NodeGyroscop
         self._bias_drift = np.array([0.0, 0.0, 0.0], dtype=float)
 
     def reset_state(self):
+        """Reset gyroscope random generator and bias drift state."""
         self._rng = np.random.default_rng(self._rng_seed)
         self._bias_drift = np.array([0.0, 0.0, 0.0], dtype=float)
 

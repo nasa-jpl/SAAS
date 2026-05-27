@@ -44,6 +44,22 @@ class NodeAsteroidGravity(Node[NodeAsteroidGravityInputs, NodeAsteroidGravityOut
     }
 
     def __init__(self, asteroid: str = "Ceres", lmax: int = None, **kwargs):
+        """Initialize asteroid gravity model selection.
+
+        Parameters
+        ----------
+        asteroid : str, optional
+            Asteroid dataset name: ``"Ceres"``, ``"Vesta"``, or ``"Eros"``.
+        lmax : int, optional
+            Maximum spherical-harmonic degree to load.
+        **kwargs
+            Additional keyword arguments forwarded to ``Node``.
+
+        Raises
+        ------
+        ValueError
+            If ``asteroid`` is not one of the supported dataset names.
+        """
         if asteroid not in self.ASTEROID_DATASETS:
             raise ValueError(
                 f"Unknown asteroid '{asteroid}'. Choose from: {list(self.ASTEROID_DATASETS.keys())}"

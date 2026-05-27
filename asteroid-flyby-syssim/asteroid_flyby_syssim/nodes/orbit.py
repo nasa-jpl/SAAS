@@ -37,15 +37,32 @@ class NodeOrbitDynamics(NodeDifferential[np.ndarray, NodeOrbitDynamicsInputs, No
     Outputs = NodeOrbitDynamicsOutputs
 
     def __init__(self, x0: np.ndarray, **kwargs):
+        """Initialize orbit dynamics state.
+
+        Parameters
+        ----------
+        x0 : np.ndarray
+            Initial state ``[rx, ry, rz, vx, vy, vz]``.
+        **kwargs
+            Additional keyword arguments forwarded to ``NodeDifferential``.
+        """
         super().__init__(np.asarray(x0, dtype=float), **kwargs)
         self._i = self.i
         self._o = self.o
 
     def initialize(self):
+        """Reset simulation time and integrated state."""
         self._t = 0.0
         self.reset_state()
 
     def update(self, sim_time: float):
+        """Advance orbit state using the latest gravity acceleration.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         accel = self.i.gravity_accel.read().value
         if accel is None or np.any(np.isnan(accel)):
             accel = np.zeros(3, dtype=float)
@@ -79,6 +96,19 @@ class NodeOrbitFrameCollector(Node[NodeOrbitFrameCollectorInputs, EmptySpec, Emp
     Inputs = NodeOrbitFrameCollectorInputs
 
     def __init__(self, output_dir: Path, frame_hz: float, filename_prefix: str, **kwargs):
+        """Initialize orbit frame collection.
+
+        Parameters
+        ----------
+        output_dir : pathlib.Path
+            Directory where the GIF will be written.
+        frame_hz : float
+            Frame sampling frequency [Hz].
+        filename_prefix : str
+            Prefix used for the generated GIF filename.
+        **kwargs
+            Additional keyword arguments forwarded to ``Node``.
+        """
         self._frames: list[np.ndarray] = []
         self._output_dir = Path(output_dir)
         self._frame_hz = float(frame_hz)
@@ -87,12 +117,26 @@ class NodeOrbitFrameCollector(Node[NodeOrbitFrameCollectorInputs, EmptySpec, Emp
         self._i = self.i
 
     def update(self, sim_time: float):
+        """Capture the current rendered frame when available.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         del sim_time
         frame = self.i.image.read().value
         if frame is not None:
             self._frames.append(self._to_uint8(frame))
 
     def finalize(self, fault_history=None):
+        """Write captured frames to an animated GIF.
+
+        Parameters
+        ----------
+        fault_history : object, optional
+            Fault history forwarded by the syssim runtime.
+        """
         super().finalize(fault_history=fault_history)
         if not self._frames:
             print("No frames captured. GIF not created.")
@@ -105,6 +149,18 @@ class NodeOrbitFrameCollector(Node[NodeOrbitFrameCollectorInputs, EmptySpec, Emp
 
     @staticmethod
     def _to_uint8(frame: np.ndarray) -> np.ndarray:
+        """Convert an image frame to 8-bit RGB-compatible data.
+
+        Parameters
+        ----------
+        frame : np.ndarray
+            Input frame in uint8, floating, or other numeric format.
+
+        Returns
+        -------
+        np.ndarray
+            Frame clipped and converted to ``np.uint8``.
+        """
         arr = np.asarray(frame)
         if arr.dtype == np.uint8:
             return arr

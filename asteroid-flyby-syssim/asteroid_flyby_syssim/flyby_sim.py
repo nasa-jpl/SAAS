@@ -37,6 +37,20 @@ from .nodes import (
 
 
 def _normalize(v: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """Return a unit vector with zero fallback.
+
+    Parameters
+    ----------
+    v : np.ndarray
+        Vector to normalize.
+    eps : float, optional
+        Minimum norm treated as nonzero.
+
+    Returns
+    -------
+    np.ndarray
+        Normalized vector, or zeros with the input shape when the norm is small.
+    """
     n = np.linalg.norm(v)
     if n < eps:
         return np.zeros_like(v)
@@ -57,30 +71,104 @@ def _normalize_quaternion_wxyz(q_wxyz: np.ndarray, eps: float = 1e-12) -> np.nda
 
 
 def _quat_wxyz_to_xyzw(q_wxyz: np.ndarray) -> np.ndarray:
+    """Convert a scalar-first quaternion to SciPy order.
+
+    Parameters
+    ----------
+    q_wxyz : np.ndarray
+        Quaternion in ``[w, x, y, z]`` order.
+
+    Returns
+    -------
+    np.ndarray
+        Quaternion in ``[x, y, z, w]`` order.
+    """
     q_wxyz = np.asarray(q_wxyz, dtype=float)
     return np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], dtype=float)
 
 
 def _quat_xyzw_to_wxyz(q_xyzw: np.ndarray) -> np.ndarray:
+    """Convert a SciPy-order quaternion to scalar-first order.
+
+    Parameters
+    ----------
+    q_xyzw : np.ndarray
+        Quaternion in ``[x, y, z, w]`` order.
+
+    Returns
+    -------
+    np.ndarray
+        Quaternion in ``[w, x, y, z]`` order.
+    """
     q_xyzw = np.asarray(q_xyzw, dtype=float)
     return np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], dtype=float)
 
 
 def _rotation_from_wxyz(q_wxyz: np.ndarray) -> Rotation:
+    """Create a SciPy rotation from a scalar-first quaternion.
+
+    Parameters
+    ----------
+    q_wxyz : np.ndarray
+        Quaternion in ``[w, x, y, z]`` order.
+
+    Returns
+    -------
+    scipy.spatial.transform.Rotation
+        Rotation represented by the normalized quaternion.
+    """
     q_wxyz = _normalize_quaternion_wxyz(q_wxyz)
     return Rotation.from_quat(_quat_wxyz_to_xyzw(q_wxyz))
 
 
 def _wxyz_from_rotation(rot: Rotation) -> np.ndarray:
+    """Convert a SciPy rotation to a scalar-first quaternion.
+
+    Parameters
+    ----------
+    rot : scipy.spatial.transform.Rotation
+        Rotation to convert.
+
+    Returns
+    -------
+    np.ndarray
+        Quaternion in ``[w, x, y, z]`` order.
+    """
     return _quat_xyzw_to_wxyz(rot.as_quat())
 
 
 def _quat_conjugate_wxyz(q_wxyz: np.ndarray) -> np.ndarray:
+    """Return the conjugate of a scalar-first quaternion.
+
+    Parameters
+    ----------
+    q_wxyz : np.ndarray
+        Quaternion in ``[w, x, y, z]`` order.
+
+    Returns
+    -------
+    np.ndarray
+        Quaternion conjugate in scalar-first order.
+    """
     q_wxyz = np.asarray(q_wxyz, dtype=float)
     return np.array([q_wxyz[0], -q_wxyz[1], -q_wxyz[2], -q_wxyz[3]], dtype=float)
 
 
 def _quat_multiply_wxyz(a_wxyz: np.ndarray, b_wxyz: np.ndarray) -> np.ndarray:
+    """Multiply two scalar-first quaternions.
+
+    Parameters
+    ----------
+    a_wxyz : np.ndarray
+        Left-hand quaternion in ``[w, x, y, z]`` order.
+    b_wxyz : np.ndarray
+        Right-hand quaternion in ``[w, x, y, z]`` order.
+
+    Returns
+    -------
+    np.ndarray
+        Hamilton product ``a_wxyz * b_wxyz`` in scalar-first order.
+    """
     aw, ax, ay, az = np.asarray(a_wxyz, dtype=float)
     bw, bx, by, bz = np.asarray(b_wxyz, dtype=float)
     return np.array(
@@ -158,6 +246,20 @@ def _compute_center_pointing_quaternion_wxyz(
 
 
 def _quat_look_rotation(forward_i: np.ndarray, up_hint_i: np.ndarray | None = None) -> np.ndarray:
+    """Create a body-to-inertial quaternion from look and up directions.
+
+    Parameters
+    ----------
+    forward_i : np.ndarray
+        Desired inertial direction for the body x-axis.
+    up_hint_i : np.ndarray, optional
+        Approximate inertial up direction used to choose roll.
+
+    Returns
+    -------
+    np.ndarray
+        Body-to-inertial quaternion in ``[w, x, y, z]`` order.
+    """
     x_axis = _normalize(forward_i)
     if np.linalg.norm(x_axis) < 1e-9:
         return np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
@@ -231,6 +333,18 @@ def _hyperbolic_state_from_params(
 
 @dataclass
 class SimulationConfig:
+    """Simulation timing and epoch configuration.
+
+    Attributes
+    ----------
+    duration_s : float
+        Total simulation duration [s].
+    dt_s : float
+        Base simulation step size [s].
+    start_date_utc : str
+        UTC start date used for ephemeris-derived rendering context.
+    """
+
     duration_s: float = 36000.0
     """Total simulation duration [s]."""
     dt_s: float = 0.5
@@ -241,6 +355,16 @@ class SimulationConfig:
 
 @dataclass
 class AsteroidConfig:
+    """Asteroid model and gravity configuration.
+
+    Attributes
+    ----------
+    asteroid : str
+        Asteroid model name: Ceres, Vesta, or Eros.
+    gravity_lmax : int or None
+        Maximum spherical-harmonic gravity degree, or None for dataset default.
+    """
+
     asteroid: str = "Ceres"
     """Asteroid model name: Ceres, Vesta, or Eros."""
     gravity_lmax: int | None = 12
@@ -249,6 +373,24 @@ class AsteroidConfig:
 
 @dataclass
 class FlybyConfig:
+    """Hyperbolic flyby geometry configuration.
+
+    Attributes
+    ----------
+    periapsis_radius_m : float
+        Flyby periapsis radius from asteroid center [m].
+    external_angle_deg : float
+        Hyperbolic external angle [deg].
+    true_anomaly0_deg : float
+        Initial true anomaly [deg].
+    inbound_ra_deg : float
+        Inbound asymptote right ascension [deg].
+    inbound_dec_deg : float
+        Inbound asymptote declination [deg].
+    bplane_angle_deg : float
+        B-plane orientation angle [deg].
+    """
+
     periapsis_radius_m: float = 8.0e5
     """Flyby periapsis radius from asteroid center [m]."""
     external_angle_deg: float = 140.0
@@ -265,6 +407,16 @@ class FlybyConfig:
 
 @dataclass
 class SpacecraftConfig:
+    """Spacecraft inertia and camera boresight configuration.
+
+    Attributes
+    ----------
+    inertia_kgm2 : tuple[float, float, float]
+        Principal spacecraft moments of inertia [kg m^2].
+    boresight_body : tuple[float, float, float]
+        Camera boresight unit vector in body coordinates.
+    """
+
     inertia_kgm2: tuple[float, float, float] = (70.0, 60.0, 45.0)
     """Principal spacecraft moments of inertia [kg m^2]."""
     boresight_body: tuple[float, float, float] = (1.0, 0.0, 0.0)
@@ -273,6 +425,20 @@ class SpacecraftConfig:
 
 @dataclass
 class ControllerConfig:
+    """Quaternion feedback controller gain configuration.
+
+    Attributes
+    ----------
+    kp : float
+        Scalar proportional attitude-control gain.
+    kd : float
+        Scalar derivative attitude-control gain.
+    ki : float
+        Scalar integral attitude-control gain.
+    integral_limit : float
+        Absolute clamp for each integrated attitude-error component.
+    """
+
     kp: float = 0.037
     """Scalar proportional attitude-control gain."""
     kd: float = 1.2
@@ -332,7 +498,33 @@ class ReactionWheelConfig:
 
 @dataclass
 class OutputConfig:
-    output_dir: str = "./outputs"
+    """Output artifact and rendering configuration.
+
+    Attributes
+    ----------
+    output_dir : str
+        Directory where flyby artifacts are written.
+    run_name : str
+        Subdirectory/run label for generated artifacts.
+    render_video : bool
+        Whether to render camera GIF output.
+    render_fps : float
+        Rendered camera sampling frequency [Hz].
+    trajectory_fps : float
+        Playback frame rate for the trajectory animation [Hz].
+    camera_width : int
+        Rendered camera image width [px].
+    camera_height : int
+        Rendered camera image height [px].
+    camera_fov_deg : float
+        Rendered camera field of view [deg].
+    spp : int
+        Mitsuba samples per pixel.
+    use_integrator_mask : bool
+        Whether to render masks with the Mitsuba visibility integrator.
+    """
+
+    output_dir: str = "/tmp"
     """Directory where flyby artifacts are written."""
     run_name: str = "asteroid_flyby"
     """Subdirectory/run label for generated artifacts."""
@@ -356,6 +548,26 @@ class OutputConfig:
 
 @dataclass
 class FlybyRunConfig:
+    """Complete configuration for a flyby simulation run.
+
+    Attributes
+    ----------
+    sim : SimulationConfig
+        Simulation timing and epoch configuration.
+    asteroid : AsteroidConfig
+        Asteroid body and gravity configuration.
+    flyby : FlybyConfig
+        Hyperbolic flyby geometry configuration.
+    spacecraft : SpacecraftConfig
+        Spacecraft inertia and camera boresight configuration.
+    controller : ControllerConfig
+        Attitude controller gain configuration.
+    rwa : ReactionWheelConfig
+        Reaction wheel actuator configuration.
+    output : OutputConfig
+        Output artifact and rendering configuration.
+    """
+
     sim: SimulationConfig = field(default_factory=SimulationConfig)
     """Simulation timing and epoch configuration."""
     asteroid: AsteroidConfig = field(default_factory=AsteroidConfig)
@@ -374,6 +586,22 @@ class FlybyRunConfig:
 
 @dataclass
 class FlybyArtifacts:
+    """Paths produced or expected by a flyby simulation run.
+
+    Attributes
+    ----------
+    output_dir : pathlib.Path
+        Directory containing run artifacts.
+    trajectory_animation : pathlib.Path
+        Path to the trajectory GIF.
+    log_csv : pathlib.Path
+        Path to the time-series CSV log.
+    log_npz : pathlib.Path
+        Path to the time-series NPZ log.
+    rendered_video : pathlib.Path or None
+        Path to the rendered camera GIF, if enabled.
+    """
+
     output_dir: Path
     trajectory_animation: Path
     log_csv: Path
@@ -382,6 +610,18 @@ class FlybyArtifacts:
 
 
 def _parse_start_datetime(start_date_utc: str | None) -> datetime:
+    """Parse a UTC start date string.
+
+    Parameters
+    ----------
+    start_date_utc : str or None
+        ISO-8601 datetime string. If None, the current UTC time is used.
+
+    Returns
+    -------
+    datetime.datetime
+        Timezone-aware start datetime.
+    """
     if start_date_utc is None:
         return datetime.now(timezone.utc)
     start_dt = datetime.fromisoformat(start_date_utc)
@@ -391,6 +631,22 @@ def _parse_start_datetime(start_date_utc: str | None) -> datetime:
 
 
 def _build_camera_node(cfg: FlybyRunConfig, start_dt: datetime, name: str = "camera") -> NodeAsteroidCamera:
+    """Create a configured asteroid camera node.
+
+    Parameters
+    ----------
+    cfg : FlybyRunConfig
+        Flyby run configuration.
+    start_dt : datetime.datetime
+        Start datetime used for rendering context.
+    name : str, optional
+        Node name assigned to the camera.
+
+    Returns
+    -------
+    NodeAsteroidCamera
+        Camera node with render frequency set from output config.
+    """
     cam = NodeAsteroidCamera(
         asteroid=cfg.asteroid.asteroid,
         resolution_width=cfg.output.camera_width,
@@ -407,11 +663,29 @@ def _build_camera_node(cfg: FlybyRunConfig, start_dt: datetime, name: str = "cam
 
 
 def _connect_allocator_to_wheels(allocator: NodeTorqueAllocator, wheels: list[NodeReactionWheel]) -> None:
+    """Wire a torque allocator output to all reaction wheels.
+
+    Parameters
+    ----------
+    allocator : NodeTorqueAllocator
+        Node producing four-wheel torque commands.
+    wheels : list[NodeReactionWheel]
+        Reaction wheel nodes receiving the command vector.
+    """
     for wheel in wheels:
         allocator.o.tau_cmd_wheel >> wheel.i.tau_cmd
 
 
 def _connect_wheel_aggregator(wheels: list[NodeReactionWheel], aggregator: NodeWheelAggregator) -> None:
+    """Wire reaction wheel outputs into an aggregation node.
+
+    Parameters
+    ----------
+    wheels : list[NodeReactionWheel]
+        Four reaction wheel nodes to aggregate.
+    aggregator : NodeWheelAggregator
+        Aggregation node receiving wheel momentum and torque ports.
+    """
     wheels[0].o.h_rw >> aggregator.i.h_rw_0
     wheels[0].o.tau_rw >> aggregator.i.tau_rw_0
     wheels[1].o.h_rw >> aggregator.i.h_rw_1
@@ -423,6 +697,20 @@ def _connect_wheel_aggregator(wheels: list[NodeReactionWheel], aggregator: NodeW
 
 
 def build_flyby_rl_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]:
+    """Build a flyby system controlled by external RL actions.
+
+    Parameters
+    ----------
+    cfg : FlybyRunConfig
+        Flyby run configuration.
+
+    Returns
+    -------
+    system : syssim.core.NodeSystem
+        Configured syssim graph with external RL action and observation nodes.
+    artifacts : FlybyArtifacts
+        Artifact paths associated with the configured run.
+    """
     output_dir = Path(cfg.output.output_dir) / cfg.output.run_name
     trajectory_animation = output_dir / "trajectory_look.gif"
     log_prefix = output_dir / "timeseries"
@@ -540,6 +828,20 @@ def build_flyby_rl_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifac
 
 
 def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]:
+    """Build the closed-loop flyby simulation system.
+
+    Parameters
+    ----------
+    cfg : FlybyRunConfig
+        Flyby run configuration.
+
+    Returns
+    -------
+    system : syssim.core.NodeSystem
+        Configured syssim graph for guidance, control, dynamics, and outputs.
+    artifacts : FlybyArtifacts
+        Artifact paths associated with the configured run.
+    """
     output_dir = Path(cfg.output.output_dir) / cfg.output.run_name
     trajectory_animation = output_dir / "trajectory_look.gif"
     log_prefix = output_dir / "timeseries"
@@ -693,6 +995,18 @@ def build_flyby_system(cfg: FlybyRunConfig) -> tuple[NodeSystem, FlybyArtifacts]
 
 
 def run_flyby(cfg: FlybyRunConfig) -> FlybyArtifacts:
+    """Build and execute a closed-loop flyby simulation.
+
+    Parameters
+    ----------
+    cfg : FlybyRunConfig
+        Flyby run configuration.
+
+    Returns
+    -------
+    FlybyArtifacts
+        Paths to artifacts generated or expected by the run.
+    """
     system, artifacts = build_flyby_system(cfg)
     artifacts.output_dir.mkdir(parents=True, exist_ok=True)
 

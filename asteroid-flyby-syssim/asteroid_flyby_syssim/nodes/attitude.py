@@ -41,6 +41,17 @@ class NodeAttitudeDynamics(
     Outputs = NodeAttitudeDynamicsOutputs
 
     def __init__(self, inertia_kgm2: tuple[float, float, float], x0: np.ndarray, **kwargs):
+        """Initialize the attitude dynamics node.
+
+        Parameters
+        ----------
+        inertia_kgm2 : tuple[float, float, float]
+            Principal moments of inertia about the body axes [kg m^2].
+        x0 : np.ndarray
+            Initial state ``[qw, qx, qy, qz, wx, wy, wz]``.
+        **kwargs
+            Additional keyword arguments forwarded to ``NodeDifferential``.
+        """
         self._j = np.diag(np.array(inertia_kgm2, dtype=float))
         self._j_inv = np.linalg.inv(self._j)
         super().__init__(np.asarray(x0, dtype=float), **kwargs)
@@ -48,14 +59,31 @@ class NodeAttitudeDynamics(
         self._o = self.o
 
     def initialize(self):
+        """Reset simulation time and state before a run."""
         self._t = 0.0
         self.reset_state()
 
     def reset_state(self, x0: np.ndarray | None = None, sim_time: float = 0.0):
+        """Reset the integrated attitude state.
+
+        Parameters
+        ----------
+        x0 : np.ndarray, optional
+            Replacement state ``[qw, qx, qy, qz, wx, wy, wz]``.
+        sim_time : float, optional
+            Simulation time associated with the reset state [s].
+        """
         self.state = np.array(self.initial_state if x0 is None else x0, dtype=float)
         self._t = float(sim_time)
 
     def update(self, sim_time: float):
+        """Advance attitude dynamics to the requested simulation time.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         dt = sim_time - self._t
         if dt <= 0.0:
             return

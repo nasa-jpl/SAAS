@@ -39,24 +39,52 @@ class NodeHyperbolicDynamics(
     Outputs = NodeHyperbolicDynamicsOutputs
 
     def __init__(self, x0: np.ndarray, mu: float, **kwargs):
+        """Initialize translational flyby dynamics.
+
+        Parameters
+        ----------
+        x0 : np.ndarray
+            Initial state ``[rx, ry, rz, vx, vy, vz]``.
+        mu : float
+            Asteroid gravitational parameter [m^3/s^2].
+        **kwargs
+            Additional keyword arguments forwarded to ``NodeDifferential``.
+        """
         self._mu = mu
         super().__init__(np.asarray(x0, dtype=float), **kwargs)
         self._i = self.i
         self._o = self.o
 
     def initialize(self):
+        """Reset simulation time, state, and cached gravity diagnostics."""
         self._t = 0.0
         self._last_gravity_accel = np.zeros(3, dtype=float)
         self._last_gravity_error = np.zeros(3, dtype=float)
         self.reset_state()
 
     def reset_state(self, x0: np.ndarray | None = None, sim_time: float = 0.0):
+        """Reset translational state and diagnostics.
+
+        Parameters
+        ----------
+        x0 : np.ndarray, optional
+            Replacement state ``[rx, ry, rz, vx, vy, vz]``.
+        sim_time : float, optional
+            Simulation time associated with the reset state [s].
+        """
         self.state = np.array(self.initial_state if x0 is None else x0, dtype=float)
         self._t = float(sim_time)
         self._last_gravity_accel = np.zeros(3, dtype=float)
         self._last_gravity_error = np.zeros(3, dtype=float)
 
     def update(self, sim_time: float):
+        """Integrate translational state to the requested time.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         dt = sim_time - self._t
         if dt <= 0.0:
             return
@@ -74,6 +102,20 @@ class NodeHyperbolicDynamics(
         self._last_gravity_error = gravity_error.copy()
 
         def rhs(t, state):
+            """Evaluate constant-acceleration translational dynamics.
+
+            Parameters
+            ----------
+            t : float
+                Integrator time, unused because acceleration is held constant.
+            state : np.ndarray
+                State vector ``[rx, ry, rz, vx, vy, vz]``.
+
+            Returns
+            -------
+            np.ndarray
+                State derivative ``[vx, vy, vz, ax, ay, az]``.
+            """
             del t
             return np.concatenate([state[3:6], acc_grav])
 

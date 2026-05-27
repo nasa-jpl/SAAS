@@ -21,12 +21,22 @@ _ASTEROID_VISIBILITY_INTEGRATOR_REGISTERED = False
 
 
 def _ensure_asteroid_visibility_integrator_registered():
+    """Register the Mitsuba integrator used for asteroid visibility masks."""
     global _ASTEROID_VISIBILITY_INTEGRATOR_REGISTERED
     if _ASTEROID_VISIBILITY_INTEGRATOR_REGISTERED:
         return
 
     class AsteroidVisibilityIntegrator(mi.SamplingIntegrator):
+        """Mitsuba integrator that returns one for asteroid hits and zero otherwise."""
+
         def __init__(self, props=mi.Properties()):
+            """Initialize the visibility integrator.
+
+            Parameters
+            ----------
+            props : mitsuba.Properties, optional
+                Mitsuba property set forwarded by the renderer.
+            """
             super().__init__(props)
 
         def sample(
@@ -37,6 +47,26 @@ def _ensure_asteroid_visibility_integrator_registered():
             medium: mi.Medium = None,
             active: bool = True,
         ) -> tuple[mi.Color3f, bool, list[float]]:
+            """Sample a ray and return a binary asteroid-hit color.
+
+            Parameters
+            ----------
+            scene : mitsuba.Scene
+                Scene to intersect.
+            sampler : mitsuba.Sampler
+                Mitsuba sampler supplied by the renderer.
+            ray : mitsuba.RayDifferential3f
+                Camera ray to test against scene geometry.
+            medium : mitsuba.Medium, optional
+                Participating medium, unused by this integrator.
+            active : bool, optional
+                Mitsuba active mask for vectorized rendering.
+
+            Returns
+            -------
+            tuple[mitsuba.Color3f, bool, list[float]]
+                Binary hit color, validity flag, and empty auxiliary output list.
+            """
             del sampler, medium
 
             ray = mi.Ray3f(ray)
@@ -766,6 +796,20 @@ class NodeAsteroidCamera(
 
     @staticmethod
     def _safe_normalize(v: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+        """Return a unit vector with zero fallback.
+
+        Parameters
+        ----------
+        v : np.ndarray
+            Vector to normalize.
+        eps : float, optional
+            Minimum norm treated as nonzero.
+
+        Returns
+        -------
+        np.ndarray
+            Normalized vector, or zeros with the input shape when the norm is small.
+        """
         n = np.linalg.norm(v)
         if n < eps:
             return np.zeros_like(v)

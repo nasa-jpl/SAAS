@@ -29,17 +29,36 @@ class NodeTrajectoryAnimator(Node[NodeTrajectoryAnimatorInputs, EmptySpec, Empty
     Inputs = NodeTrajectoryAnimatorInputs
 
     def __init__(self, output_path: Path, fps: float, **kwargs):
+        """Initialize trajectory animation collection.
+
+        Parameters
+        ----------
+        output_path : pathlib.Path
+            GIF path written during finalization.
+        fps : float
+            Output animation frame rate [frames/s].
+        **kwargs
+            Additional keyword arguments forwarded to ``Node``.
+        """
         self._output_path = Path(output_path)
         self._fps = fps
         super().__init__(**kwargs)
         self._i = self.i
 
     def initialize(self):
+        """Clear collected trajectory and look-vector samples."""
         self._t: list[float] = []
         self._r: list[np.ndarray] = []
         self._look: list[np.ndarray] = []
 
     def update(self, sim_time: float):
+        """Record the current trajectory sample when inputs are available.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         r = self.i.position.read().value
         look = self.i.look_vec.read().value
         if r is None or look is None:
@@ -49,6 +68,13 @@ class NodeTrajectoryAnimator(Node[NodeTrajectoryAnimatorInputs, EmptySpec, Empty
         self._look.append(np.array(look, dtype=float))
 
     def finalize(self, fault_history=None):
+        """Save collected trajectory samples as a GIF.
+
+        Parameters
+        ----------
+        fault_history : object, optional
+            Fault history forwarded by the syssim runtime.
+        """
         if not self._r:
             return
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -72,6 +98,18 @@ class NodeTrajectoryAnimator(Node[NodeTrajectoryAnimatorInputs, EmptySpec, Empty
         quiv = None
 
         def _update(frame_idx: int):
+            """Update the trajectory animation artists for one frame.
+
+            Parameters
+            ----------
+            frame_idx : int
+                Index of the frame to draw.
+
+            Returns
+            -------
+            tuple
+                Matplotlib artists updated for the current frame.
+            """
             nonlocal quiv
             rr = r[: frame_idx + 1]
             traj_line.set_data(rr[:, 0], rr[:, 1])
@@ -133,14 +171,31 @@ class NodeDataRecorder(Node[NodeDataRecorderInputs, EmptySpec, EmptySpec, EmptyS
     Inputs = NodeDataRecorderInputs
 
     def __init__(self, output_prefix: Path, **kwargs):
+        """Initialize time-series data recording.
+
+        Parameters
+        ----------
+        output_prefix : pathlib.Path
+            Output path prefix used for CSV, NPZ, and plot artifacts.
+        **kwargs
+            Additional keyword arguments forwarded to ``Node``.
+        """
         self._output_prefix = Path(output_prefix)
         super().__init__(**kwargs)
         self._i = self.i
 
     def initialize(self):
+        """Clear recorded diagnostic rows before simulation."""
         self._rows: list[dict[str, float]] = []
 
     def update(self, sim_time: float):
+        """Record one diagnostic row when all inputs are available.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         values = {name: getattr(self.i, name).read().value for name in self.i.__dataclass_fields__}
         if any(value is None for value in values.values()):
             return
@@ -190,6 +245,23 @@ class NodeDataRecorder(Node[NodeDataRecorderInputs, EmptySpec, EmptySpec, EmptyS
         )
 
     def _plot_components_with_magnitude(self, t, components, labels, title, ylabel, output_path):
+        """Plot vector components and magnitude to a file.
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time samples [s].
+        components : np.ndarray
+            Vector component samples with shape ``(N, 3)``.
+        labels : tuple[str, str, str]
+            Labels for the three component traces.
+        title : str
+            Figure title.
+        ylabel : str
+            Y-axis label.
+        output_path : pathlib.Path
+            Path where the PNG figure is written.
+        """
         mag = np.linalg.norm(components, axis=1)
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.plot(t, components[:, 0], label=labels[0])
@@ -206,6 +278,13 @@ class NodeDataRecorder(Node[NodeDataRecorderInputs, EmptySpec, EmptySpec, EmptyS
         plt.close(fig)
 
     def _save_diagnostic_plots(self, arrs: dict[str, np.ndarray]):
+        """Write diagnostic plots from recorded time-series arrays.
+
+        Parameters
+        ----------
+        arrs : dict[str, np.ndarray]
+            Recorded columns keyed by CSV/NPZ field name.
+        """
         t = arrs["t"]
         wheel_speeds = np.column_stack([arrs["ws0"], arrs["ws1"], arrs["ws2"], arrs["ws3"]])
         wheel_torques = np.column_stack([arrs["wt0"], arrs["wt1"], arrs["wt2"], arrs["wt3"]])
@@ -256,6 +335,13 @@ class NodeDataRecorder(Node[NodeDataRecorderInputs, EmptySpec, EmptySpec, EmptyS
         )
 
     def finalize(self, fault_history=None):
+        """Write recorded diagnostics to CSV, NPZ, and plot files.
+
+        Parameters
+        ----------
+        fault_history : object, optional
+            Fault history forwarded by the syssim runtime.
+        """
         if not self._rows:
             return
         self._output_prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -286,6 +372,19 @@ class NodeFrameCollector(Node[NodeFrameCollectorInputs, EmptySpec, EmptySpec, Em
     Inputs = NodeFrameCollectorInputs
 
     def __init__(self, output_path: Path, output_mask_path: Path | None = None, fps: float = 20, **kwargs):
+        """Initialize rendered image and mask collection.
+
+        Parameters
+        ----------
+        output_path : pathlib.Path
+            GIF path for rendered image frames.
+        output_mask_path : pathlib.Path, optional
+            GIF path for rendered mask frames.
+        fps : float, optional
+            Output animation frame rate [frames/s].
+        **kwargs
+            Additional keyword arguments forwarded to ``Node``.
+        """
         self._output_path = Path(output_path)
         self._output_mask_path = Path(output_mask_path) if output_mask_path is not None else None
         self._fps = fps
@@ -293,10 +392,18 @@ class NodeFrameCollector(Node[NodeFrameCollectorInputs, EmptySpec, EmptySpec, Em
         self._i = self.i
 
     def initialize(self):
+        """Clear collected image and mask frames."""
         self._image_frames: list[np.ndarray] = []
         self._mask_frames: list[np.ndarray] = []
 
     def update(self, sim_time: float):
+        """Collect current image and mask frames when available.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         del sim_time
         image = self.i.image.read().value
         mask = self.i.mask.read().value
@@ -306,6 +413,13 @@ class NodeFrameCollector(Node[NodeFrameCollectorInputs, EmptySpec, EmptySpec, Em
             self._mask_frames.append(np.asarray(mask, dtype=np.uint8))
 
     def finalize(self, fault_history=None):
+        """Write collected image and mask GIFs.
+
+        Parameters
+        ----------
+        fault_history : object, optional
+            Fault history forwarded by the syssim runtime.
+        """
         if self._image_frames:
             self._output_path.parent.mkdir(parents=True, exist_ok=True)
             imageio.mimsave(self._output_path, self._image_frames, duration=1.0 / max(self._fps, 1e-6), loop=0)

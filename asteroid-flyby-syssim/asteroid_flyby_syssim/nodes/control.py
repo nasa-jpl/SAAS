@@ -56,6 +56,23 @@ class NodeAttitudeController(
         inertia_kgm2: tuple[float, float, float],
         **kwargs,
     ):
+        """Initialize quaternion feedback control gains and state.
+
+        Parameters
+        ----------
+        kp : float
+            Proportional gain scalar applied through the inertia matrix.
+        kd : float
+            Derivative gain scalar applied through the inertia matrix.
+        ki : float
+            Integral gain scalar for accumulated attitude error.
+        integral_limit : float
+            Absolute per-axis limit for the integral state.
+        inertia_kgm2 : tuple[float, float, float]
+            Principal spacecraft moments of inertia [kg m^2].
+        **kwargs
+            Additional keyword arguments forwarded to ``NodeDifferential``.
+        """
         self._k_scalar = kp
         self._d_scalar = kd
         self._ki = ki
@@ -68,14 +85,29 @@ class NodeAttitudeController(
         self._o = self.o
 
     def initialize(self):
+        """Reset controller state before simulation."""
         self._t = 0.0
         self.reset_state()
 
     def reset_state(self, sim_time: float = 0.0):
+        """Reset the integral error accumulator.
+
+        Parameters
+        ----------
+        sim_time : float, optional
+            Simulation time associated with the reset state [s].
+        """
         self.state = np.zeros(3, dtype=float)
         self._t = float(sim_time)
 
     def update(self, sim_time: float):
+        """Compute commanded body torque from current command and state.
+
+        Parameters
+        ----------
+        sim_time : float
+            Current simulation time [s].
+        """
         q_cmd_bi = self.i.q_cmd.read().value
         q_bi = self.i.q.read().value
         w_cmd_b_rps = self.i.w_cmd.read().value

@@ -90,6 +90,20 @@ class ParallelEnvExecutor:
             List of info dicts.
         """
         def step_env(env_idx: int, action: np.ndarray):
+            """Step one environment and return its indexed result.
+
+            Parameters
+            ----------
+            env_idx : int
+                Environment index to step.
+            action : np.ndarray
+                Action to apply to the environment.
+
+            Returns
+            -------
+            tuple[int, tuple]
+                Environment index and Gymnasium step result.
+            """
             env = self.envs[env_idx]
             try:
                 obs, reward, terminated, truncated, info = env.step(action)
@@ -289,10 +303,29 @@ class TorchRLPPOAdapter(nn.Module):
     """Wrap ViTGyroPolicy for TorchRL TensorDict inputs."""
 
     def __init__(self, base_policy: ViTGyroPolicy):
+        """Initialize the policy adapter.
+
+        Parameters
+        ----------
+        base_policy : ViTGyroPolicy
+            Policy network used to compute action distribution parameters.
+        """
         super().__init__()
         self.base_policy = base_policy
 
     def forward(self, observation: TensorDict) -> dict[str, torch.Tensor]:
+        """Compute TorchRL distribution parameters from observations.
+
+        Parameters
+        ----------
+        observation : TensorDict
+            TensorDict containing image and gyroscope-history observations.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            Dictionary with ``loc`` and ``scale`` tensors for the actor distribution.
+        """
         image = observation["image"]
         if image.dtype == torch.uint8:
             image = image.float() / 255.0
@@ -309,10 +342,29 @@ class TorchRLValueAdapter(nn.Module):
     """Wrap ViTGyroPolicy value head for TorchRL TensorDict inputs."""
 
     def __init__(self, base_policy: ViTGyroPolicy):
+        """Initialize the value adapter.
+
+        Parameters
+        ----------
+        base_policy : ViTGyroPolicy
+            Policy network whose critic head provides values.
+        """
         super().__init__()
         self.base_policy = base_policy
 
     def forward(self, observation: TensorDict) -> dict[str, torch.Tensor]:
+        """Compute TorchRL state-value output from observations.
+
+        Parameters
+        ----------
+        observation : TensorDict
+            TensorDict containing image and gyroscope-history observations.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            Dictionary with ``state_value`` tensor.
+        """
         image = observation["image"]
         if image.dtype == torch.uint8:
             image = image.float() / 255.0
@@ -344,6 +396,20 @@ def _stack_observations(observations: list[dict], device: torch.device) -> Tenso
 
 
 def _stack_image_batch(observations: list[dict], device: torch.device) -> torch.Tensor:
+    """Stack image observations into channel-first tensors.
+
+    Parameters
+    ----------
+    observations : list[dict]
+        Gymnasium observation dictionaries containing ``image`` arrays.
+    device : torch.device
+        Device where tensors should be created.
+
+    Returns
+    -------
+    torch.Tensor
+        Batched image tensor with shape ``(N, C, H, W)``.
+    """
     images = []
     for obs in observations:
         image = torch.as_tensor(obs["image"], device=device)
@@ -354,6 +420,20 @@ def _stack_image_batch(observations: list[dict], device: torch.device) -> torch.
 
 
 def _stack_gyro_batch(observations: list[dict], device: torch.device) -> torch.Tensor:
+    """Stack gyroscope-history observations into a tensor batch.
+
+    Parameters
+    ----------
+    observations : list[dict]
+        Gymnasium observation dictionaries containing ``gyro_history`` arrays.
+    device : torch.device
+        Device where tensors should be created.
+
+    Returns
+    -------
+    torch.Tensor
+        Batched gyroscope-history tensor.
+    """
     return torch.stack(
         [torch.as_tensor(obs["gyro_history"], device=device, dtype=torch.float32) for obs in observations]
     )
@@ -364,6 +444,24 @@ def _build_ppo_modules(
     action_dim: int,
     device: torch.device,
 ) -> tuple[ProbabilisticActor, TensorDictModule]:
+    """Build TorchRL actor and critic modules from a policy network.
+
+    Parameters
+    ----------
+    policy_net : ViTGyroPolicy
+        Shared neural network used by actor and critic adapters.
+    action_dim : int
+        Action dimension retained for caller clarity.
+    device : torch.device
+        Device where modules should be placed.
+
+    Returns
+    -------
+    actor : torchrl.modules.ProbabilisticActor
+        Probabilistic actor module producing bounded actions.
+    critic_module : tensordict.nn.TensorDictModule
+        Critic module producing state-value estimates.
+    """
     policy_adapter = TorchRLPPOAdapter(policy_net).to(device)
     value_adapter = TorchRLValueAdapter(policy_net).to(device)
 
@@ -389,6 +487,18 @@ def _build_ppo_modules(
 
 @dataclass
 class SimulationArgs:
+    """Simulation timing CLI arguments.
+
+    Attributes
+    ----------
+    sim_dt : float
+        Simulation step size [s].
+    start_date_utc : str
+        Simulation start date in UTC.
+    duration_seconds : float
+        Maximum simulation duration [s].
+    """
+
     sim_dt: float = 0.01
     start_date_utc: str = "2024-01-01T00:00:00"
     duration_seconds: float = 3600.0
@@ -396,12 +506,40 @@ class SimulationArgs:
 
 @dataclass
 class AsteroidArgs:
+    """Asteroid model CLI arguments.
+
+    Attributes
+    ----------
+    asteroid : str
+        Asteroid name to simulate.
+    gravity_lmax : int
+        Maximum spherical-harmonic gravity degree.
+    """
+
     asteroid: str = "Ceres"
     gravity_lmax: int = 10
 
 
 @dataclass
 class FlybyArgs:
+    """Hyperbolic flyby geometry CLI arguments.
+
+    Attributes
+    ----------
+    periapsis_radius_m : float
+        Flyby periapsis radius from asteroid center [m].
+    external_angle_deg : float
+        Hyperbolic external angle [deg].
+    true_anomaly0_deg : float
+        Initial true anomaly [deg].
+    inbound_ra_deg : float
+        Inbound asymptote right ascension [deg].
+    inbound_dec_deg : float
+        Inbound asymptote declination [deg].
+    bplane_angle_deg : float
+        B-plane orientation angle [deg].
+    """
+
     periapsis_radius_m: float = 3000.0
     external_angle_deg: float = 120.0
     true_anomaly0_deg: float = -90.0
@@ -412,12 +550,36 @@ class FlybyArgs:
 
 @dataclass
 class SpacecraftArgs:
+    """Spacecraft physical and pointing CLI arguments.
+
+    Attributes
+    ----------
+    inertia_kgm2 : list[float]
+        Principal moments of inertia [kg m^2].
+    boresight_body : list[float]
+        Camera boresight vector in body coordinates.
+    """
+
     inertia_kgm2: list[float] = field(default_factory=lambda: [10.0, 10.0, 10.0])
     boresight_body: list[float] = field(default_factory=lambda: [1.0, 0.0, 0.0])
 
 
 @dataclass
 class ControllerArgs:
+    """Attitude controller gain CLI arguments.
+
+    Attributes
+    ----------
+    kp : float
+        Proportional gain scalar.
+    kd : float
+        Derivative gain scalar.
+    ki : float
+        Integral gain scalar.
+    integral_limit : float
+        Absolute per-axis integral-state clamp.
+    """
+
     kp: float = 0.5
     kd: float = 2.0
     ki: float = 0.01
@@ -426,6 +588,26 @@ class ControllerArgs:
 
 @dataclass
 class ReactionWheelArgs:
+    """Reaction wheel actuator CLI arguments.
+
+    Attributes
+    ----------
+    max_momentum_nms : float
+        Maximum wheel momentum [N m s].
+    max_torque_nm : float
+        Maximum wheel torque [N m].
+    max_speed_rps : float
+        Maximum wheel speed [rad/s].
+    inertia_kgm2 : float
+        Wheel spin-axis inertia [kg m^2].
+    friction_viscous : float
+        Viscous friction coefficient [N m s].
+    friction_coulomb : float
+        Coulomb friction torque [N m].
+    command_lag_tau : float
+        First-order command lag time constant [s].
+    """
+
     max_momentum_nms: float = 10.0
     max_torque_nm: float = 1.0
     max_speed_rps: float = 628.3
@@ -437,6 +619,22 @@ class ReactionWheelArgs:
 
 @dataclass
 class GyroscopeArgs:
+    """Gyroscope sensor CLI arguments.
+
+    Attributes
+    ----------
+    bias_rad_s : list[float]
+        Constant additive bias for each axis [rad/s].
+    scale_errors : list[float]
+        Fractional scale-factor errors for each axis.
+    white_noise_std_rad_s : float
+        White angular-rate noise standard deviation [rad/s].
+    bias_random_walk_std_rad_s2 : float
+        Bias random-walk standard deviation [rad/s^2].
+    sample_rate_hz : float
+        Gyroscope sampling rate [Hz].
+    """
+
     bias_rad_s: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     scale_errors: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     white_noise_std_rad_s: float = 1e-4
@@ -446,6 +644,30 @@ class GyroscopeArgs:
 
 @dataclass
 class OutputArgs:
+    """Output and rendering CLI arguments.
+
+    Attributes
+    ----------
+    output_dir : str
+        Directory where training outputs are written.
+    run_name : str
+        Run label used for generated artifacts.
+    render_video : bool
+        Whether to render videos during simulation.
+    camera_width : int
+        Camera image width [px].
+    camera_height : int
+        Camera image height [px].
+    camera_fov_deg : float
+        Camera field of view [deg].
+    render_fps : float
+        Camera rendering frequency [Hz].
+    spp : int
+        Mitsuba samples per pixel.
+    use_integrator_mask : bool
+        Whether to render masks with the Mitsuba visibility integrator.
+    """
+
     output_dir: str = "outputs/rl_training"
     run_name: str = "ast_track_01"
     render_video: bool = False
@@ -459,6 +681,32 @@ class OutputArgs:
 
 @dataclass
 class RLEnvironmentArgs:
+    """Reinforcement-learning environment CLI arguments.
+
+    Attributes
+    ----------
+    camera_width : int
+        Observation image width [px].
+    camera_height : int
+        Observation image height [px].
+    camera_fov_deg : float
+        Camera field of view [deg].
+    max_steps : int
+        Maximum environment steps per episode.
+    max_steps_without_asteroid : int
+        Maximum consecutive steps without asteroid visibility.
+    asteroid_visibility_threshold : float
+        Minimum mask fraction treated as visible.
+    torque_scale_nm : float
+        Maximum action torque scale [N m].
+    gyro_history_length : int
+        Number of gyroscope samples stacked in each observation.
+    render_at_frequency : float, optional
+        Camera render frequency override [Hz].
+    randomize_on_reset : bool
+        Whether to randomize flyby geometry on reset.
+    """
+
     camera_width: int = 128
     camera_height: int = 128
     camera_fov_deg: float = 50.0
@@ -479,6 +727,26 @@ class RLEnvironmentArgs:
 
 @dataclass
 class NetworkArgs:
+    """Policy network CLI arguments.
+
+    Attributes
+    ----------
+    vit_model : str
+        timm Vision Transformer model name or shorthand.
+    vit_pretrained : bool
+        Whether to use pretrained ViT weights.
+    vit_freeze_depth : int
+        Number of early ViT blocks to freeze.
+    temporal_attention_heads : int
+        Number of gyroscope temporal-attention heads.
+    temporal_attention_dim : int
+        Gyroscope temporal-attention feature dimension.
+    hidden_dim : int
+        Hidden feature dimension for actor and critic heads.
+    action_std_init : float
+        Initial log-standard-deviation parameter value.
+    """
+
     vit_model: str = "vit_tiny_patch16_224"
     vit_pretrained: bool = True
     vit_freeze_depth: int = 6
@@ -490,6 +758,26 @@ class NetworkArgs:
 
 @dataclass
 class TrainingArgs:
+    """PPO optimization CLI arguments.
+
+    Attributes
+    ----------
+    algorithm : str
+        Training algorithm label.
+    num_envs : int
+        Number of parallel environments.
+    steps_per_rollout : int
+        Environment steps collected per rollout.
+    num_epochs : int
+        PPO optimization epochs per rollout.
+    batch_size : int
+        Minibatch size for PPO updates.
+    learning_rate : float
+        Optimizer learning rate.
+    max_steps : int
+        Maximum number of environment transitions to train on.
+    """
+
     algorithm: str = "PPO"
     num_envs: int = 8
     steps_per_rollout: int = 512
@@ -512,6 +800,22 @@ class TrainingArgs:
 
 @dataclass
 class LoggingArgs:
+    """Training logging CLI arguments.
+
+    Attributes
+    ----------
+    tensorboard_log_dir : str
+        TensorBoard log directory.
+    log_frequency : int
+        Step interval for scalar logging.
+    save_video_frequency : int, optional
+        Step interval for video logging.
+    log_episode_return : bool
+        Whether to log episode returns.
+    log_episode_length : bool
+        Whether to log episode lengths.
+    """
+
     tensorboard_log_dir: str = "outputs/rl_training/logs"
     log_frequency: int = 100
     save_video_frequency: Optional[int] = None
@@ -527,6 +831,22 @@ class LoggingArgs:
 
 @dataclass
 class EvaluationArgs:
+    """Evaluation CLI arguments.
+
+    Attributes
+    ----------
+    num_eval_episodes : int
+        Number of evaluation episodes per evaluation run.
+    eval_frequency : int
+        Step interval between evaluation runs.
+    deterministic : bool
+        Whether to use deterministic actions during evaluation.
+    render_video : bool
+        Whether to render evaluation videos.
+    video_dir : str
+        Directory where evaluation videos are written.
+    """
+
     num_eval_episodes: int = 10
     eval_frequency: int = 50_000
     deterministic: bool = True
@@ -536,12 +856,32 @@ class EvaluationArgs:
 
 @dataclass
 class DeviceArgs:
+    """Torch device CLI arguments.
+
+    Attributes
+    ----------
+    device : str
+        Torch device string.
+    mixed_precision : bool
+        Whether to enable mixed precision training.
+    """
+
     device: str = "cuda"
     mixed_precision: bool = False
 
 
 @dataclass
 class ReproducibilityArgs:
+    """Reproducibility CLI arguments.
+
+    Attributes
+    ----------
+    seed : int
+        Random seed used for NumPy and Torch.
+    deterministic_torch : bool
+        Whether to request deterministic Torch algorithms.
+    """
+
     seed: int = 42
     deterministic_torch: bool = True
 
