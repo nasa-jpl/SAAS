@@ -8,6 +8,7 @@ authors = [
 dependencies = [
     "matplotlib",
     "numpy",
+    "rich",
     "rustworkx",
     "scipy"
 ]

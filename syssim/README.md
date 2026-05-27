@@ -36,6 +36,8 @@ plant.o.y >> scope.i.scope
 sys.simulate(t_f=2.0, dt=0.1, log_dir="runs/demo")
 ```
 
+`simulate` displays a Rich progress bar by default. Pass `show_progress=False` to disable terminal progress output.
+
 Run the examples for more complete setups: `python example/step/run.py`, `python example/step_fault/run.py`, or `python example/integrator_chain_delay/run.py`.
 
 ## Core Concepts

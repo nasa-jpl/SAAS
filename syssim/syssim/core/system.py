@@ -7,6 +7,14 @@ from pathlib import Path
 from typing import Iterable
 
 import rustworkx as rwx
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 from syssim.core.fault import Fault, FaultContext
 from syssim.core.logging import CsvSimulationLogger
@@ -136,24 +144,32 @@ class NodeSystem:
         log_faults: bool = True,
         enable_faults: bool | None = None,
         batches: int = 1,
+        show_progress: bool = True,
     ) -> None:
         previous_enable_faults = self.enable_faults
         if enable_faults is not None:
             self.enable_faults = bool(enable_faults)
         try:
-            for batch in range(batches):
-                self._output_dir = self._resolve_output_dir(log_dir, save_dir, sim_name, batch, batches)
-                self._logger = (
-                    CsvSimulationLogger(self._output_dir, values=log_values, faults=log_faults)
-                    if log_dir is not None
-                    else None
-                )
-                self.initialize(dt)
-                while self._t < t_f - 1e-12:
-                    self._run_time(self._t)
-                    self._step_index += 1
-                    self._t = round(float(self._step_index * self._base_dt_fraction), 12)
-                self.finalize()
+            task_id = None
+            with self._progress_bar(show_progress) as progress:
+                for batch in range(batches):
+                    self._output_dir = self._resolve_output_dir(log_dir, save_dir, sim_name, batch, batches)
+                    self._logger = (
+                        CsvSimulationLogger(self._output_dir, values=log_values, faults=log_faults)
+                        if log_dir is not None
+                        else None
+                    )
+                    self.initialize(dt)
+                    if task_id is None:
+                        task_id = progress.add_task("Simulating", total=self._simulation_steps(t_f) * batches)
+                    if batches > 1:
+                        progress.update(task_id, description=f"Simulating batch {batch + 1}/{batches}")
+                    while self._t < t_f - 1e-12:
+                        self._run_time(self._t)
+                        progress.advance(task_id)
+                        self._step_index += 1
+                        self._t = round(float(self._step_index * self._base_dt_fraction), 12)
+                    self.finalize()
         finally:
             self.enable_faults = previous_enable_faults
 
@@ -222,6 +238,23 @@ class NodeSystem:
         self._base_dt_fraction = _fraction_gcd(periods)
         self._base_dt = float(self._base_dt_fraction)
         self._period_steps = {node: int(_fraction(node.period) / self._base_dt_fraction) for node in self._nodes}
+
+    def _simulation_steps(self, t_f: float) -> int:
+        final_time = float(t_f) - 1e-12
+        if final_time <= 0.0:
+            return 0
+        return int(Fraction(str(final_time)) // self._base_dt_fraction) + 1
+
+    @staticmethod
+    def _progress_bar(show_progress: bool) -> Progress:
+        return Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            disable=not show_progress,
+        )
 
     def _resolve_output_dir(self, log_dir, save_dir, sim_name, batch: int, batches: int) -> Path | None:
         base = log_dir if log_dir is not None else save_dir
